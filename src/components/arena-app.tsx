@@ -43,7 +43,7 @@ const POLICIES = [
 const START_POSE = [0, -0.62, 1.08, -0.48, 0, 0.72];
 const FALLBACK_SNAPSHOT: PhysicsSnapshot = {
   joints: START_POSE,
-  cube: [0.22, -0.04, 0.04],
+  cube: [0.3, 0, 0.04],
   contacts: 0,
   simTime: 0,
 };
@@ -216,7 +216,7 @@ export function ArenaApp() {
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><i /><i /></span><span>ROBOARENA</span><span className="version">BETA</span></div>
         <nav className="nav-tabs" aria-label="Main navigation"><a className="active" href="#arena">Arena</a><a href="#policies">Policies</a><a href="#leaderboard">Leaderboard</a></nav>
-        <div className="header-actions"><a className="docs-link" href="https://huggingface.co/docs/lerobot/so101" target="_blank" rel="noreferrer">SO-101 ↗</a><button className="profile-button"><span>AK</span><i /></button></div>
+        <div className="header-actions"><a className="docs-link" href="https://github.com/google-deepmind/mujoco_menagerie/tree/main/robotstudio_so101" target="_blank" rel="noreferrer">MENAGERIE ↗</a><button className="profile-button"><span>AK</span><i /></button></div>
       </header>
 
       <section className="arena-layout" id="arena">
@@ -249,8 +249,8 @@ export function ArenaApp() {
             <div><span>SIM TIME</span><strong>{snapshot.simTime.toFixed(1)}s</strong></div>
           </div>
           <div className="scene-caption">
-            <div><span className="eyebrow">ROBOT</span><strong>SO-101 · Follower</strong></div>
-            <div><span className="eyebrow">PHYSICS</span><strong>MuJoCo · 250 Hz</strong></div>
+            <div><span className="eyebrow">ROBOT</span><strong>SO-101 · Menagerie</strong></div>
+            <div><span className="eyebrow">PHYSICS</span><strong>MuJoCo · 200 Hz</strong></div>
             <div><span className="eyebrow">ENVIRONMENT</span><strong>{selectedTask.environment}</strong></div>
           </div>
         </section>

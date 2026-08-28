@@ -1,4 +1,4 @@
-import type { MainModule, MjData, MjModel } from "@mujoco/mujoco";
+import type { MainModule, MjData, MjModel, MjVFS } from "@mujoco/mujoco";
 
 export type PhysicsSnapshot = {
   joints: number[];
@@ -8,17 +8,41 @@ export type PhysicsSnapshot = {
 };
 
 const START_POSE = [0, -0.62, 1.08, -0.48, 0, 0.72];
+const MODEL_ROOT = "/models/robotstudio_so101";
+const ASSET_FILES = [
+  "base_motor_holder_so101_v1.stl",
+  "base_so101_v2.stl",
+  "motor_holder_so101_base_v1.stl",
+  "motor_holder_so101_wrist_v1.stl",
+  "moving_jaw_so101_gripper_part0_v1.stl",
+  "moving_jaw_so101_gripper_part1_v1.stl",
+  "moving_jaw_so101_gripper_v1.stl",
+  "moving_jaw_so101_v1.stl",
+  "rotation_pitch_so101_v1.stl",
+  "sts3215_03a_no_horn_v1.stl",
+  "sts3215_03a_v1.stl",
+  "under_arm_so101_v1.stl",
+  "upper_arm_so101_v1.stl",
+  "waveshare_mounting_plate_so101_v2.stl",
+  "wrist_roll_follower_so101_camera_mount.stl",
+  "wrist_roll_follower_so101_gripper_part0_v1.stl",
+  "wrist_roll_follower_so101_gripper_v1.stl",
+  "wrist_roll_follower_so101_v1.stl",
+  "wrist_roll_pitch_so101_v2.stl",
+] as const;
 
 export class MujocoEngine {
   readonly version: string;
   private module: MainModule;
   private model: MjModel;
   private data: MjData;
+  private vfs: MjVFS;
 
-  private constructor(module: MainModule, model: MjModel, data: MjData) {
+  private constructor(module: MainModule, model: MjModel, data: MjData, vfs: MjVFS) {
     this.module = module;
     this.model = model;
     this.data = data;
+    this.vfs = vfs;
     this.version = module.mj_versionString();
   }
 
@@ -29,22 +53,34 @@ export class MujocoEngine {
     const importRuntime = new Function("url", "return import(url)") as (
       url: string,
     ) => Promise<{ default: (options?: unknown) => Promise<MainModule> }>;
-    const [{ default: loadMujoco }, modelResponse] = await Promise.all([
+    const [{ default: loadMujoco }, sceneResponse, robotResponse, ...assetResponses] = await Promise.all([
       importRuntime("/mujoco.js"),
-      fetch("/models/so101_arena.xml", { cache: "no-store" }),
+      fetch(`${MODEL_ROOT}/arena.xml`, { cache: "no-store" }),
+      fetch(`${MODEL_ROOT}/so101.xml`, { cache: "force-cache" }),
+      ...ASSET_FILES.map((file) => fetch(`${MODEL_ROOT}/assets/${file}`, { cache: "force-cache" })),
     ]);
 
-    if (!modelResponse.ok) {
-      throw new Error(`SO-101 model failed to load (${modelResponse.status})`);
+    const failedResponse = [sceneResponse, robotResponse, ...assetResponses].find((response) => !response.ok);
+    if (failedResponse) {
+      throw new Error(`SO-101 Menagerie model failed to load (${failedResponse.status})`);
     }
 
-    const xml = await modelResponse.text();
+    const [xml, robotXml, ...assetBuffers] = await Promise.all([
+      sceneResponse.text(),
+      robotResponse.arrayBuffer(),
+      ...assetResponses.map((response) => response.arrayBuffer()),
+    ]);
     const module = await loadMujoco({
       locateFile: (path: string) => path.endsWith(".wasm") ? "/mujoco.wasm" : path,
     });
-    const model = module.MjModel.from_xml_string(xml);
+    const vfs = new module.MjVFS();
+    vfs.addBuffer("so101.xml", new Uint8Array(robotXml));
+    ASSET_FILES.forEach((file, index) => {
+      vfs.addBuffer(`assets/${file}`, new Uint8Array(assetBuffers[index]));
+    });
+    const model = module.MjModel.from_xml_string(xml, vfs);
     const data = new module.MjData(model);
-    const engine = new MujocoEngine(module, model, data);
+    const engine = new MujocoEngine(module, model, data, vfs);
     engine.reset();
     return engine;
   }
@@ -81,5 +117,6 @@ export class MujocoEngine {
   dispose() {
     this.data.delete();
     this.model.delete();
+    this.vfs.delete();
   }
 }
