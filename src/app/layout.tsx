@@ -14,8 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL ??
-      "https://roboarena-so101.xueliu115.chatgpt.site",
+    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
   ),
   title: "RoboArena — Train. Compete. Advance.",
   description: "An open arena for training robot policies on SO-101 challenges.",
