@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RoboArena
 
-## Getting Started
+RoboArena is a browser-based training ground for robot policies. This first slice focuses on an SO-101 follower arm, a small manipulation task circuit, and a real MuJoCo WebAssembly simulation loop rendered with Three.js.
 
-First, run the development server:
+## What is included
+
+- Three interactive tasks: Lift Cube, Stack Blocks, and Push to Target
+- A procedural SO-101 visualization with six controlled joints
+- Google DeepMind's first-party MuJoCo WebAssembly runtime
+- A compact SO-101 MJCF model based on TheRobotStudio's open model parameters
+- Manual keyboard control, scripted baseline, and random exploration policies
+- Episode timing, rewards, contacts, simulation state, and season metrics
+- Responsive arena UI for desktop and mobile
+
+## Run locally
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Production build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+```
 
-## Learn More
+The app is statically exported and also prepares a lightweight hosting worker in `dist/`.
 
-To learn more about Next.js, take a look at the following resources:
+## Architecture
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `src/components/arena-app.tsx` owns tasks, policies, episodes, and controls.
+- `src/components/arena-scene.tsx` renders the robot and arena with React Three Fiber.
+- `src/lib/mujoco-engine.ts` is the physics boundary. Replace or extend this class when moving policy execution to a worker or remote trainer.
+- `public/models/so101_arena.xml` is the compact simulation model.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The next natural step is to define a stable policy contract such as `reset(task)`, `act(observation)`, and `close()`, then run user policies in isolated workers against batched MuJoCo environments.
 
-## Deploy on Vercel
+## Model sources
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [Hugging Face LeRobot SO-101 guide](https://huggingface.co/docs/lerobot/so101)
+- [TheRobotStudio SO-ARM100 SO-101 simulation assets](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Simulation/SO101)
+- [Google DeepMind MuJoCo JavaScript bindings](https://github.com/google-deepmind/mujoco/tree/main/wasm)
