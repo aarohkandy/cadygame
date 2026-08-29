@@ -268,7 +268,7 @@ function Scene({ cameraPreset, cube, joints, running, taskId }: ArenaSceneProps)
 
 export function ArenaScene(props: ArenaSceneProps) {
   return (
-    <Canvas shadows dpr={[1, 1.6]} camera={{ position: [1.45, 1.12, 1.55], fov: 36, near: 0.01, far: 20 }} gl={{ antialias: true, powerPreference: "high-performance" }}>
+    <Canvas shadows="percentage" dpr={[1, 1.6]} camera={{ position: [1.45, 1.12, 1.55], fov: 36, near: 0.01, far: 20 }} gl={{ antialias: true, powerPreference: "high-performance" }}>
       <Scene {...props} />
     </Canvas>
   );
