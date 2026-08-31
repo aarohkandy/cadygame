@@ -17,24 +17,24 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
   ),
   title: "RoboArena — Train. Compete. Advance.",
-  description: "An open arena for training robot policies on SO-101 challenges.",
+  description: "A head-to-head arena where SO-101 robot policies race through manipulation challenges.",
   openGraph: {
     title: "RoboArena — Train. Compete. Advance.",
-    description: "Train robot policies, master SO-101 challenges, and compete in the open arena.",
+    description: "Pit two SO-101 robot policies against each other in live manipulation challenges.",
     type: "website",
     images: [
       {
         url: "/og.png",
         width: 1731,
         height: 909,
-        alt: "RoboArena SO-101 robot arm approaching a cube in the training arena",
+        alt: "Two SO-101 robot arms competing face-to-face in RoboArena",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
     title: "RoboArena — Train. Compete. Advance.",
-    description: "Train robot policies, master SO-101 challenges, and compete in the open arena.",
+    description: "Pit two SO-101 robot policies against each other in live manipulation challenges.",
     images: ["/og.png"],
   },
 };
@@ -43,6 +43,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>

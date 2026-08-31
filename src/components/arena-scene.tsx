@@ -6,12 +6,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import * as THREE from "three";
 
-export type CameraPreset = "orbit" | "front" | "side";
+export type CameraPreset = "arena" | "atlas" | "blaze" | "overhead";
+export type CubeOwner = "neutral" | "atlas" | "blaze";
 
 type ArenaSceneProps = {
   cameraPreset: CameraPreset;
-  cube: [number, number, number];
   joints: number[];
+  opponentJoints: number[];
+  playerProgress: number;
+  opponentProgress: number;
+  cubeOwners: CubeOwner[];
   running: boolean;
   taskId: string;
 };
@@ -25,6 +29,8 @@ type JointNode = {
 const MODEL_ROOT = "/models/robotstudio_so101";
 const MODEL_SCALE = 2.05;
 const JOINT_ORDER = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"];
+const ATLAS_COLOR = new THREE.Color("#2f8062");
+const BLAZE_COLOR = new THREE.Color("#ef6b42");
 
 function numbers(value: string | null, fallback: number[]) {
   if (!value) return fallback;
@@ -52,9 +58,8 @@ function applyTransform(object: THREE.Object3D, element: Element) {
   }
 }
 
-function SO101MenagerieModel({ joints }: { joints: number[] }) {
+function useSO101Model() {
   const [model, setModel] = useState<THREE.Group | null>(null);
-  const jointNodes = useRef(new Map<string, JointNode>());
 
   useEffect(() => {
     let alive = true;
@@ -99,7 +104,6 @@ function SO101MenagerieModel({ joints }: { joints: number[] }) {
         }),
       );
       const geometries = new Map(geometryEntries);
-      const jointsByName = new Map<string, JointNode>();
 
       function buildBody(element: Element): THREE.Group {
         const group = new THREE.Group();
@@ -109,12 +113,8 @@ function SO101MenagerieModel({ joints }: { joints: number[] }) {
         const jointElement = directChildren(element, "joint")[0];
         if (jointElement) {
           const [ax, ay, az] = numbers(jointElement.getAttribute("axis"), [0, 0, 1]);
-          const name = jointElement.getAttribute("name") ?? "";
-          jointsByName.set(name, {
-            axis: new THREE.Vector3(ax, ay, az).normalize(),
-            baseQuaternion: group.quaternion.clone(),
-            group,
-          });
+          group.userData.jointName = jointElement.getAttribute("name") ?? "";
+          group.userData.jointAxis = [ax, ay, az];
         }
 
         directChildren(element, "geom").forEach((geomElement) => {
@@ -130,6 +130,7 @@ function SO101MenagerieModel({ joints }: { joints: number[] }) {
           });
           const mesh = new THREE.Mesh(geometry, material);
           mesh.name = meshName ?? "visual";
+          mesh.userData.isAccent = !materialName.includes("sts3215");
           mesh.castShadow = true;
           mesh.receiveShadow = true;
           applyTransform(mesh, geomElement);
@@ -145,15 +146,13 @@ function SO101MenagerieModel({ joints }: { joints: number[] }) {
       builtModel = buildBody(baseElement);
       if (!alive) {
         builtModel.traverse((object) => {
-          if (object instanceof THREE.Mesh) {
-            object.geometry.dispose();
-            if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
-            else object.material.dispose();
-          }
+          if (!(object instanceof THREE.Mesh)) return;
+          object.geometry.dispose();
+          if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
+          else object.material.dispose();
         });
         return;
       }
-      jointNodes.current = jointsByName;
       setModel(builtModel);
     }
 
@@ -163,23 +162,55 @@ function SO101MenagerieModel({ joints }: { joints: number[] }) {
 
     return () => {
       alive = false;
-      if (builtModel) {
-        builtModel.traverse((object) => {
-          if (object instanceof THREE.Mesh) {
-            object.geometry.dispose();
-            if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
-            else object.material.dispose();
-          }
-        });
-      }
-      jointNodes.current.clear();
+      if (!builtModel) return;
+      builtModel.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        object.geometry.dispose();
+        if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
+        else object.material.dispose();
+      });
     };
   }, []);
+
+  return model;
+}
+
+function CompetitorRobot({ accent, joints, source }: { accent: THREE.Color; joints: number[]; source: THREE.Group }) {
+  const instance = useMemo(() => {
+    const clone = source.clone(true);
+    const jointNodes = new Map<string, JointNode>();
+
+    clone.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        const sourceMaterial = Array.isArray(object.material) ? object.material[0] : object.material;
+        const material = sourceMaterial.clone();
+        if (object.userData.isAccent) material.color.copy(accent);
+        object.material = material;
+      }
+      if (!(object instanceof THREE.Group) || !object.userData.jointName) return;
+      const [x, y, z] = object.userData.jointAxis as number[];
+      jointNodes.set(object.userData.jointName as string, {
+        axis: new THREE.Vector3(x, y, z).normalize(),
+        baseQuaternion: object.quaternion.clone(),
+        group: object,
+      });
+    });
+
+    return { clone, jointNodes };
+  }, [accent, source]);
+
+  useEffect(() => () => {
+    instance.clone.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
+      else object.material.dispose();
+    });
+  }, [instance]);
 
   useFrame((_, delta) => {
     const smoothing = 1 - Math.exp(-delta * 14);
     JOINT_ORDER.forEach((name, index) => {
-      const node = jointNodes.current.get(name);
+      const node = instance.jointNodes.get(name);
       if (!node) return;
       const currentAngle = node.group.userData.jointAngle ?? 0;
       const angle = THREE.MathUtils.lerp(currentAngle, joints[index] ?? 0, smoothing);
@@ -189,86 +220,217 @@ function SO101MenagerieModel({ joints }: { joints: number[] }) {
     });
   });
 
-  if (!model) return null;
-  return <primitive object={model} />;
+  return <primitive object={instance.clone} />;
 }
 
-function TaskObjects({ cube, running, taskId }: { cube: [number, number, number]; running: boolean; taskId: string }) {
-  const block = useRef<THREE.Mesh>(null);
-  useFrame(({ clock }, delta) => {
-    if (!block.current) return;
-    block.current.rotation.y += delta * (running ? 0.35 : 0.08);
-    if (running && taskId === "lift") block.current.position.y = cube[2] + Math.max(0, Math.sin(clock.elapsedTime * 1.4)) * 0.12;
-  });
-
-  const objectPosition: [number, number, number] = [cube[0], cube[2], -cube[1]];
+function ArenaMarkings() {
   return (
-    <group>
-      <mesh ref={block} position={objectPosition} castShadow receiveShadow>
-        <boxGeometry args={[0.08, 0.08, 0.08]} />
-        <meshStandardMaterial color="#ef6b42" roughness={0.54} />
+    <group position={[0, 0.003, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.62, 0.635, 96]} />
+        <meshBasicMaterial color="#48564f" transparent opacity={0.42} side={THREE.DoubleSide} />
       </mesh>
-      {taskId === "stack" && (
-        <>
-          <mesh position={[0.32, 0.04, 0.13]} castShadow><boxGeometry args={[0.08, 0.08, 0.08]} /><meshStandardMaterial color="#e2bd54" /></mesh>
-          <mesh position={[0.38, 0.04, -0.03]} castShadow><boxGeometry args={[0.08, 0.08, 0.08]} /><meshStandardMaterial color="#83b99a" /></mesh>
-        </>
-      )}
-      <mesh position={taskId === "push" ? [0.4, 0.002, -0.12] : [0.3, 0.002, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.09, 0.105, 48]} />
-        <meshBasicMaterial color="#ef6b42" transparent opacity={0.68} side={THREE.DoubleSide} />
+      <mesh position={[-0.57, 0, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.16, 0.175, 64]} />
+        <meshBasicMaterial color="#2f8062" transparent opacity={0.7} side={THREE.DoubleSide} />
       </mesh>
-      <mesh position={taskId === "lift" ? [0.3, 0.15, 0] : [0.4, 0.05, -0.12]}>
-        <sphereGeometry args={[taskId === "lift" ? 0.05 : 0.07, 24, 16]} />
-        <meshBasicMaterial color={taskId === "push" ? "#68a37e" : "#ef6b42"} transparent opacity={0.09} depthWrite={false} />
+      <mesh position={[0.57, 0, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.16, 0.175, 64]} />
+        <meshBasicMaterial color="#ef6b42" transparent opacity={0.72} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.012, 1.18]} />
+        <meshBasicMaterial color="#707d76" transparent opacity={0.35} side={THREE.DoubleSide} />
       </mesh>
     </group>
   );
 }
 
+function ProgressRing({ color, position, progress }: { color: string; position: [number, number, number]; progress: number }) {
+  return (
+    <group position={position} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh>
+        <ringGeometry args={[0.095, 0.108, 48]} />
+        <meshBasicMaterial color={color} transparent opacity={0.22} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh rotation={[0, 0, Math.PI * (1 - progress)]}>
+        <ringGeometry args={[0.097, 0.111, 48, 1, 0, Math.max(0.05, Math.PI * 2 * progress)]} />
+        <meshBasicMaterial color={color} transparent opacity={0.95} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  );
+}
+
+const NEUTRAL_CUBE_POSITIONS: [number, number, number][] = Array.from({ length: 9 }, (_, index) => [
+  (index % 3 - 1) * 0.1,
+  0.045,
+  (Math.floor(index / 3) - 1) * 0.11,
+]);
+
+function ownedCubePosition(owner: Exclude<CubeOwner, "neutral">, sideIndex: number): [number, number, number] {
+  const row = Math.floor(sideIndex / 3);
+  const lane = sideIndex % 3 - 1;
+  const direction = owner === "atlas" ? -1 : 1;
+  return [direction * (0.34 + row * 0.09), 0.045, lane * 0.105];
+}
+
+function HeistCube({ index, owner, sideIndex, running }: { index: number; owner: CubeOwner; sideIndex: number; running: boolean }) {
+  const cube = useRef<THREE.Mesh>(null);
+  const target = useMemo(() => {
+    const position = owner === "neutral" ? NEUTRAL_CUBE_POSITIONS[index] : ownedCubePosition(owner, sideIndex);
+    return new THREE.Vector3(...position);
+  }, [index, owner, sideIndex]);
+  const color = owner === "atlas" ? "#66a98b" : owner === "blaze" ? "#f08461" : "#e2c45d";
+
+  useFrame((_, delta) => {
+    if (!cube.current) return;
+    const horizontalDistance = Math.hypot(cube.current.position.x - target.x, cube.current.position.z - target.z);
+    const carriedTarget = target.clone();
+    carriedTarget.y += Math.min(0.16, horizontalDistance * 0.52);
+    cube.current.position.lerp(carriedTarget, 1 - Math.exp(-delta * 3.3));
+    cube.current.rotation.y += delta * (running ? 0.9 : 0.15);
+    cube.current.rotation.x = THREE.MathUtils.lerp(cube.current.rotation.x, horizontalDistance > 0.03 ? 0.25 : 0, 1 - Math.exp(-delta * 5));
+  });
+
+  return (
+    <mesh ref={cube} position={NEUTRAL_CUBE_POSITIONS[index]} castShadow receiveShadow>
+      <boxGeometry args={[0.085, 0.085, 0.085]} />
+      <meshStandardMaterial color={color} roughness={0.48} metalness={0.04} />
+    </mesh>
+  );
+}
+
+function TerritoryZone({ color, x }: { color: string; x: number }) {
+  return (
+    <group position={[x, 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh>
+        <circleGeometry args={[0.235, 64]} />
+        <meshBasicMaterial color={color} transparent opacity={0.08} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+      <mesh>
+        <ringGeometry args={[0.225, 0.238, 64]} />
+        <meshBasicMaterial color={color} transparent opacity={0.82} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  );
+}
+
+function HeistObjects({ cubeOwners, running }: Pick<ArenaSceneProps, "cubeOwners" | "running">) {
+  return (
+    <group>
+      <TerritoryZone color="#2f8062" x={-0.37} />
+      <TerritoryZone color="#ef6b42" x={0.37} />
+      <group position={[0, 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh><ringGeometry args={[0.17, 0.18, 64]} /><meshBasicMaterial color="#8a8c85" transparent opacity={0.5} side={THREE.DoubleSide} /></mesh>
+      </group>
+      {cubeOwners.map((owner, index) => {
+        const sideIndex = cubeOwners.slice(0, index).filter((cubeOwner) => cubeOwner === owner).length;
+        return <HeistCube key={index} index={index} owner={owner} sideIndex={sideIndex} running={running} />;
+      })}
+    </group>
+  );
+}
+
+function RaceObjects({ opponentProgress, playerProgress, running, taskId }: Pick<ArenaSceneProps, "opponentProgress" | "playerProgress" | "running" | "taskId">) {
+  const atlasBlock = useRef<THREE.Mesh>(null);
+  const blazeBlock = useRef<THREE.Mesh>(null);
+
+  useFrame((_, delta) => {
+    if (atlasBlock.current) atlasBlock.current.rotation.y += delta * (running ? 0.5 : 0.1);
+    if (blazeBlock.current) blazeBlock.current.rotation.y -= delta * (running ? 0.46 : 0.1);
+  });
+
+  const atlasX = taskId === "push" ? -0.27 + playerProgress * 0.18 : -0.18;
+  const blazeX = taskId === "push" ? 0.27 - opponentProgress * 0.18 : 0.18;
+  const atlasY = taskId === "stack" ? 0.07 + playerProgress * 0.13 : 0.07;
+  const blazeY = taskId === "stack" ? 0.07 + opponentProgress * 0.13 : 0.07;
+
+  return (
+    <group>
+      <mesh ref={atlasBlock} position={[atlasX, atlasY, -0.13]} castShadow receiveShadow>
+        <boxGeometry args={[0.14, 0.14, 0.14]} />
+        <meshStandardMaterial color="#2f8062" roughness={0.52} />
+      </mesh>
+      <mesh ref={blazeBlock} position={[blazeX, blazeY, 0.13]} castShadow receiveShadow>
+        <boxGeometry args={[0.14, 0.14, 0.14]} />
+        <meshStandardMaterial color="#ef6b42" roughness={0.52} />
+      </mesh>
+
+      {taskId === "stack" && (
+        <>
+          <mesh position={[-0.18, 0.07, -0.13]} castShadow receiveShadow><boxGeometry args={[0.14, 0.14, 0.14]} /><meshStandardMaterial color="#d9c568" /></mesh>
+          <mesh position={[0.18, 0.07, 0.13]} castShadow receiveShadow><boxGeometry args={[0.14, 0.14, 0.14]} /><meshStandardMaterial color="#d9c568" /></mesh>
+        </>
+      )}
+
+      <ProgressRing color="#2f8062" position={[taskId === "push" ? -0.06 : -0.18, 0.006, -0.13]} progress={playerProgress} />
+      <ProgressRing color="#ef6b42" position={[taskId === "push" ? 0.06 : 0.18, 0.006, 0.13]} progress={opponentProgress} />
+    </group>
+  );
+}
+
+function CompetitionObjects(props: Pick<ArenaSceneProps, "cubeOwners" | "opponentProgress" | "playerProgress" | "running" | "taskId">) {
+  return props.taskId === "heist" ? <HeistObjects cubeOwners={props.cubeOwners} running={props.running} /> : <RaceObjects {...props} />;
+}
+
 const CAMERA_POSITIONS: Record<CameraPreset, THREE.Vector3> = {
-  orbit: new THREE.Vector3(1.45, 1.12, 1.55),
-  front: new THREE.Vector3(0.08, 0.86, 1.8),
-  side: new THREE.Vector3(1.75, 0.82, 0.05),
+  arena: new THREE.Vector3(0, 1.18, 2.15),
+  atlas: new THREE.Vector3(-1.42, 0.72, 0.62),
+  blaze: new THREE.Vector3(1.42, 0.72, -0.62),
+  overhead: new THREE.Vector3(0.01, 2.65, 0.01),
 };
 
 function CameraRig({ preset }: { preset: CameraPreset }) {
   const { camera } = useThree();
-  const target = useMemo(() => CAMERA_POSITIONS[preset].clone(), [preset]);
-  useFrame((_, delta) => camera.position.lerp(target, 1 - Math.exp(-delta * 4.2)));
-  useEffect(() => camera.lookAt(0, 0.35, 0), [camera, preset]);
+  const targetPosition = useMemo(() => CAMERA_POSITIONS[preset].clone(), [preset]);
+  useFrame((_, delta) => {
+    camera.position.lerp(targetPosition, 1 - Math.exp(-delta * 4.8));
+    camera.lookAt(0, 0.32, 0);
+  });
   return null;
 }
 
-function Scene({ cameraPreset, cube, joints, running, taskId }: ArenaSceneProps) {
+function Scene(props: ArenaSceneProps) {
+  const model = useSO101Model();
+
   return (
     <>
       <color attach="background" args={["#e6e1d5"]} />
-      <fog attach="fog" args={["#e6e1d5", 2.2, 4.5]} />
-      <ambientLight intensity={1.4} />
+      <fog attach="fog" args={["#e6e1d5", 2.6, 5]} />
+      <ambientLight intensity={1.45} />
       <directionalLight castShadow position={[1.8, 3.2, 2.4]} intensity={3.1} color="#fff8e7" shadow-mapSize={[1024, 1024]} />
-      <directionalLight position={[-2, 1.2, -1]} intensity={1.0} color="#b7d6c3" />
-      <group scale={MODEL_SCALE} rotation={[-Math.PI / 2, 0, 0]}>
-        <SO101MenagerieModel joints={joints} />
-      </group>
-      <group scale={MODEL_SCALE}>
-        <TaskObjects cube={cube} running={running} taskId={taskId} />
-      </group>
-      <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.006, 0]}>
+      <directionalLight position={[-2, 1.2, -1]} intensity={1.15} color="#b7d6c3" />
+
+      {model && (
+        <>
+          <group position={[-0.57, 0, 0]} scale={MODEL_SCALE} rotation={[-Math.PI / 2, 0, 0]}>
+            <CompetitorRobot accent={ATLAS_COLOR} joints={props.joints} source={model} />
+          </group>
+          <group position={[0.57, 0, 0]} rotation={[0, Math.PI, 0]}>
+            <group scale={MODEL_SCALE} rotation={[-Math.PI / 2, 0, 0]}>
+              <CompetitorRobot accent={BLAZE_COLOR} joints={props.opponentJoints} source={model} />
+            </group>
+          </group>
+        </>
+      )}
+
+      <CompetitionObjects {...props} />
+      <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.008, 0]}>
         <planeGeometry args={[4, 4]} />
         <meshStandardMaterial color="#ded8cb" roughness={0.92} />
       </mesh>
-      <Grid position={[0, 0.001, 0]} args={[3, 3]} cellSize={0.1} cellThickness={0.5} cellColor="#7f8c83" sectionSize={0.5} sectionThickness={0.8} sectionColor="#66766d" fadeDistance={2.5} fadeStrength={1.5} infiniteGrid />
-      <ContactShadows position={[0, 0.004, 0]} opacity={0.36} scale={3} blur={2.5} far={1.4} />
-      <CameraRig preset={cameraPreset} />
-      <OrbitControls makeDefault target={[0, 0.34, 0]} enablePan={false} minDistance={0.9} maxDistance={2.8} minPolarAngle={0.35} maxPolarAngle={1.48} />
+      <ArenaMarkings />
+      <Grid position={[0, 0.001, 0]} args={[3.5, 3.5]} cellSize={0.1} cellThickness={0.5} cellColor="#7f8c83" sectionSize={0.5} sectionThickness={0.8} sectionColor="#66766d" fadeDistance={2.8} fadeStrength={1.5} infiniteGrid />
+      <ContactShadows position={[0, 0.004, 0]} opacity={0.36} scale={3.5} blur={2.5} far={1.5} />
+      <CameraRig preset={props.cameraPreset} />
+      <OrbitControls makeDefault target={[0, 0.32, 0]} enabled={props.cameraPreset === "arena"} enablePan={false} minDistance={1.25} maxDistance={3} minPolarAngle={0.18} maxPolarAngle={1.48} />
     </>
   );
 }
 
 export function ArenaScene(props: ArenaSceneProps) {
   return (
-    <Canvas shadows="percentage" dpr={[1, 1.6]} camera={{ position: [1.45, 1.12, 1.55], fov: 36, near: 0.01, far: 20 }} gl={{ antialias: true, powerPreference: "high-performance" }}>
+    <Canvas shadows="percentage" dpr={[1, 1.6]} camera={{ position: [0, 1.18, 2.15], fov: 39, near: 0.01, far: 20 }} gl={{ antialias: true, powerPreference: "high-performance" }}>
       <Scene {...props} />
     </Canvas>
   );
