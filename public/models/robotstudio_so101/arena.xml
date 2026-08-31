@@ -1,10 +1,11 @@
-<mujoco model="RoboArena SO-101">
+<mujoco model="RoboArena SO-101 Duel">
   <!--
-    RoboArena scene wrapper. The included robot description and mesh assets
-    are the unmodified Google DeepMind MuJoCo Menagerie robotstudio_so101
-    model, distributed under Apache-2.0 in the adjacent LICENSE file.
+    The SO-101 is attached twice so both competitors live in the same MuJoCo
+    world. Prefixes keep every body, joint, actuator, and geom independently
+    addressable while preserving the vendored Menagerie model unchanged.
   -->
-  <include file="so101.xml"/>
+  <option integrator="implicitfast" timestep="0.005" cone="elliptic"
+    iterations="20" ls_iterations="30" impratio="10"/>
 
   <visual>
     <headlight diffuse="0.65 0.65 0.62" ambient="0.3 0.3 0.3" specular="0.1 0.1 0.1"/>
@@ -12,14 +13,63 @@
     <global azimuth="145" elevation="-22"/>
   </visual>
 
+  <asset>
+    <model name="so101_competitor" file="so101.xml"/>
+  </asset>
+
+  <default>
+    <default class="arena_cube">
+      <joint type="free" damping="0.002"/>
+      <geom type="box" size="0.02 0.02 0.02" mass="0.08" condim="3"
+        friction="1 0.03 0.003" solref="0.012 1" solimp="0.9 0.95 0.001"
+        contype="2" conaffinity="7" rgba="0.89 0.7 0.2 1"/>
+    </default>
+  </default>
+
   <worldbody>
     <light pos="0 -1 2.5" dir="0 0.3 -1" directional="true" diffuse="0.9 0.88 0.82"/>
-    <geom name="floor" type="plane" size="1.2 1.2 0.05" rgba="0.87 0.85 0.79 1" friction="1 0.03 0.003"/>
-    <body name="cube" pos="0.30 0 0.04">
-      <freejoint/>
-      <geom name="cube_geom" type="box" size="0.04 0.04 0.04" mass="0.08" condim="3"
-        friction="1 0.03 0.003" rgba="0.94 0.31 0.18 1" solref="0.01 1"/>
+    <geom name="floor" type="plane" size="1.2 1.2 0.05" contype="4" conaffinity="7"
+      rgba="0.87 0.85 0.79 1" friction="1 0.03 0.003"/>
+
+    <!-- The mounts are 0.64 m apart in simulation space. The second arm is
+         rotated by pi around MuJoCo Z so the competitors face one another. -->
+    <body name="atlas_mount" pos="-0.32 0 0">
+      <attach model="so101_competitor" body="base" prefix="atlas_"/>
     </body>
-    <site name="target" pos="0.30 0 0.15" size="0.055" type="sphere" rgba="0.94 0.31 0.18 0.08"/>
+    <body name="blaze_mount" pos="0.32 0 0" quat="0 0 0 1">
+      <attach model="so101_competitor" body="base" prefix="blaze_"/>
+    </body>
+
+    <!-- Nine independent rigid cubes occupy the shared central workspace. -->
+    <body name="cube_0" pos="-0.04878 0.05366 0.0205" childclass="arena_cube">
+      <joint name="cube_0_joint"/><geom name="cube_0_geom"/>
+    </body>
+    <body name="cube_1" pos="0 0.05366 0.0205" childclass="arena_cube">
+      <joint name="cube_1_joint"/><geom name="cube_1_geom"/>
+    </body>
+    <body name="cube_2" pos="0.04878 0.05366 0.0205" childclass="arena_cube">
+      <joint name="cube_2_joint"/><geom name="cube_2_geom"/>
+    </body>
+    <body name="cube_3" pos="-0.04878 0 0.0205" childclass="arena_cube">
+      <joint name="cube_3_joint"/><geom name="cube_3_geom"/>
+    </body>
+    <body name="cube_4" pos="0 0 0.0205" childclass="arena_cube">
+      <joint name="cube_4_joint"/><geom name="cube_4_geom"/>
+    </body>
+    <body name="cube_5" pos="0.04878 0 0.0205" childclass="arena_cube">
+      <joint name="cube_5_joint"/><geom name="cube_5_geom"/>
+    </body>
+    <body name="cube_6" pos="-0.04878 -0.05366 0.0205" childclass="arena_cube">
+      <joint name="cube_6_joint"/><geom name="cube_6_geom"/>
+    </body>
+    <body name="cube_7" pos="0 -0.05366 0.0205" childclass="arena_cube">
+      <joint name="cube_7_joint"/><geom name="cube_7_geom"/>
+    </body>
+    <body name="cube_8" pos="0.04878 -0.05366 0.0205" childclass="arena_cube">
+      <joint name="cube_8_joint"/><geom name="cube_8_geom"/>
+    </body>
+
+    <site name="atlas_zone" pos="-0.18 0 0.01" size="0.11" type="cylinder" rgba="0.18 0.5 0.38 0.06"/>
+    <site name="blaze_zone" pos="0.18 0 0.01" size="0.11" type="cylinder" rgba="0.94 0.42 0.26 0.06"/>
   </worldbody>
 </mujoco>

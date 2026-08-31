@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArenaScene, type CameraPreset, type CubeOwner } from "@/components/arena-scene";
-import { MujocoEngine, type PhysicsSnapshot } from "@/lib/mujoco-engine";
+import { CUBE_COUNT, MujocoEngine, START_POSE, type PhysicsSnapshot } from "@/lib/mujoco-engine";
 
 const TASKS = [
   {
@@ -47,29 +47,29 @@ const CAMERA_PRESETS: { id: CameraPreset; label: string }[] = [
   { id: "overhead", label: "Top" },
 ];
 
-const START_POSE = [0, -0.62, 1.08, -0.48, 0, 0.72];
 const HEIST_MATCH_LENGTH = 60;
-const HEIST_CUBE_COUNT = 9;
-const HEIST_EVENTS: { at: number; cube: number; owner: Exclude<CubeOwner, "neutral"> }[] = [
-  { at: 4, cube: 0, owner: "atlas" },
-  { at: 7, cube: 1, owner: "blaze" },
-  { at: 10, cube: 2, owner: "atlas" },
-  { at: 14, cube: 3, owner: "blaze" },
-  { at: 18, cube: 4, owner: "atlas" },
-  { at: 22, cube: 5, owner: "blaze" },
-  { at: 26, cube: 6, owner: "atlas" },
-  { at: 30, cube: 7, owner: "blaze" },
-  { at: 34, cube: 8, owner: "atlas" },
-  { at: 39, cube: 0, owner: "blaze" },
-  { at: 44, cube: 1, owner: "atlas" },
-  { at: 49, cube: 2, owner: "blaze" },
-  { at: 54, cube: 3, owner: "atlas" },
-  { at: 58, cube: 4, owner: "blaze" },
-];
+const INITIAL_CUBE_POSITIONS: [number, number, number][] = Array.from({ length: CUBE_COUNT }, (_, index) => [
+  (index % 3 - 1) * 0.04878,
+  (1 - Math.floor(index / 3)) * 0.05366,
+  0.0205,
+]);
 const FALLBACK_SNAPSHOT: PhysicsSnapshot = {
-  joints: START_POSE,
-  cube: [0.3, 0, 0.04],
+  joints: [...START_POSE],
+  opponentJoints: [...START_POSE],
+  cubes: INITIAL_CUBE_POSITIONS.map((position) => ({ position, quaternion: [0, 0, 0, 1] })),
   contacts: 0,
+  armContacts: 0,
+  cubeContacts: 0,
+  collision: {
+    kind: "none",
+    attacker: null,
+    force: 0,
+    impulse: 0,
+    position: [0, 0, 0],
+    atlasLink: "",
+    blazeLink: "",
+    eventId: 0,
+  },
   simTime: 0,
 };
 
@@ -79,12 +79,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function heistOwnersAt(elapsed: number) {
-  const owners: CubeOwner[] = Array.from({ length: HEIST_CUBE_COUNT }, () => "neutral");
-  HEIST_EVENTS.forEach((event) => {
-    if (event.at <= elapsed) owners[event.cube] = event.owner;
-  });
-  return owners;
+function cubeOwner(position: [number, number, number]): CubeOwner {
+  if (Math.hypot(position[0] + 0.18, position[1]) <= 0.105) return "atlas";
+  if (Math.hypot(position[0] - 0.18, position[1]) <= 0.105) return "blaze";
+  return "neutral";
 }
 
 function countCubes(owners: CubeOwner[], owner: CubeOwner) {
@@ -135,36 +133,41 @@ export function ArenaApp() {
   const [engineStatus, setEngineStatus] = useState<EngineStatus>("loading");
   const [engineVersion, setEngineVersion] = useState("WASM");
   const [snapshot, setSnapshot] = useState<PhysicsSnapshot>(FALLBACK_SNAPSHOT);
-  const [opponentJoints, setOpponentJoints] = useState(START_POSE);
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [reward, setReward] = useState(0);
   const [opponentReward, setOpponentReward] = useState(0);
   const [episodes, setEpisodes] = useState(1248);
   const [successes, setSuccesses] = useState(899);
+  const [combatStats, setCombatStats] = useState({ atlas: 0, blaze: 0, blocks: 0 });
   const engineRef = useRef<MujocoEngine | null>(null);
-  const targetsRef = useRef(START_POSE);
+  const targetsRef = useRef<number[]>([...START_POSE]);
   const elapsedRef = useRef(0);
+  const lastCollisionEventRef = useRef(0);
   const selectedTask = useMemo(() => TASKS.find((task) => task.id === selectedTaskId) ?? TASKS[0], [selectedTaskId]);
   const isHeist = selectedTaskId === "heist";
   const matchLength = isHeist ? HEIST_MATCH_LENGTH : episodeLength;
-  const cubeOwners = useMemo(() => heistOwnersAt(elapsed), [elapsed]);
+  const cubeOwners = useMemo(() => snapshot.cubes.map((cube) => cubeOwner(cube.position)), [snapshot.cubes]);
 
   const updateTargets = useCallback((next: number[]) => {
     targetsRef.current = next;
   }, []);
 
-  const resetEpisode = useCallback(() => {
+  const resetEpisode = useCallback((taskId = selectedTaskId) => {
     setRunning(false);
     elapsedRef.current = 0;
     setElapsed(0);
     setReward(0);
     setOpponentReward(0);
-    setOpponentJoints(START_POSE);
-    updateTargets(START_POSE);
-    const next = engineRef.current?.reset() ?? FALLBACK_SNAPSHOT;
+    setCombatStats({ atlas: 0, blaze: 0, blocks: 0 });
+    lastCollisionEventRef.current = 0;
+    updateTargets([...START_POSE]);
+    const next = engineRef.current?.reset({
+      cubesEnabled: taskId === "heist",
+      randomizeCubes: randomization && taskId === "heist",
+    }) ?? FALLBACK_SNAPSHOT;
     setSnapshot(next);
-  }, [updateTargets]);
+  }, [randomization, selectedTaskId, updateTargets]);
 
   useEffect(() => {
     let alive = true;
@@ -198,19 +201,34 @@ export function ArenaApp() {
       const scripted = policyTargets(policyIndex, selectedTaskId, nextElapsed);
       const opponentTargets = opponentPolicyTargets(selectedTaskId, nextElapsed);
       if (scripted) updateTargets(scripted);
-      setOpponentJoints(opponentTargets);
       const activeTargets = scripted ?? targetsRef.current;
-      const nextSnapshot = engineRef.current?.step(activeTargets, 4) ?? {
+      const nextSnapshot = engineRef.current?.step(activeTargets, opponentTargets, 4) ?? {
         ...FALLBACK_SNAPSHOT,
         joints: activeTargets,
+        opponentJoints: opponentTargets,
         simTime: nextElapsed,
       };
       setSnapshot(nextSnapshot);
 
+      if (nextSnapshot.collision.eventId > 0 && nextSnapshot.collision.eventId !== lastCollisionEventRef.current) {
+        lastCollisionEventRef.current = nextSnapshot.collision.eventId;
+        setCombatStats((stats) => {
+          if (nextSnapshot.collision.kind === "strike" && nextSnapshot.collision.attacker) {
+            return { ...stats, [nextSnapshot.collision.attacker]: stats[nextSnapshot.collision.attacker] + 1 };
+          }
+          return { ...stats, blocks: stats.blocks + 1 };
+        });
+      }
+
       const taskFactor = selectedTaskId === "heist" ? 1 : selectedTaskId === "push" ? 0.93 : 0.86;
       const opponentFactor = selectedTaskId === "heist" ? 0.98 : selectedTaskId === "push" ? 0.95 : 0.94;
-      const newReward = clamp((nextElapsed / matchLength) * taskFactor, 0, taskFactor);
-      const newOpponentReward = clamp((nextElapsed / matchLength) * opponentFactor, 0, opponentFactor);
+      const nextOwners = nextSnapshot.cubes.map((cube) => cubeOwner(cube.position));
+      const newReward = selectedTaskId === "heist"
+        ? countCubes(nextOwners, "atlas") / CUBE_COUNT
+        : clamp((nextElapsed / matchLength) * taskFactor, 0, taskFactor);
+      const newOpponentReward = selectedTaskId === "heist"
+        ? countCubes(nextOwners, "blaze") / CUBE_COUNT
+        : clamp((nextElapsed / matchLength) * opponentFactor, 0, opponentFactor);
       setReward(newReward);
       setOpponentReward(newOpponentReward);
       if (Math.floor(nextElapsed * 10) % 2 === 0) setElapsed(nextElapsed);
@@ -221,8 +239,7 @@ export function ArenaApp() {
         setElapsed(matchLength);
         setEpisodes((value) => value + 1);
         if (selectedTaskId === "heist") {
-          const finalOwners = heistOwnersAt(matchLength);
-          if (countCubes(finalOwners, "atlas") > countCubes(finalOwners, "blaze")) setSuccesses((value) => value + 1);
+          if (countCubes(nextOwners, "atlas") > countCubes(nextOwners, "blaze")) setSuccesses((value) => value + 1);
         } else if (newReward > newOpponentReward) {
           setSuccesses((value) => value + 1);
         }
@@ -269,7 +286,7 @@ export function ArenaApp() {
 
   const chooseTask = (taskId: (typeof TASKS)[number]["id"]) => {
     setSelectedTaskId(taskId);
-    window.setTimeout(resetEpisode, 0);
+    resetEpisode(taskId);
   };
 
   const statusLabel = engineStatus === "ready" ? `MUJOCO ${engineVersion}` : engineStatus === "loading" ? "LOADING PHYSICS" : "PREVIEW MODE";
@@ -306,7 +323,7 @@ export function ArenaApp() {
         </aside>
 
         <section className="stage">
-          <div className="scene-canvas"><ArenaScene cameraPreset={cameraPreset} joints={snapshot.joints} opponentJoints={opponentJoints} playerProgress={reward} opponentProgress={opponentReward} cubeOwners={cubeOwners} running={running} taskId={selectedTaskId} /></div>
+          <div className="scene-canvas"><ArenaScene cameraPreset={cameraPreset} joints={snapshot.joints} opponentJoints={snapshot.opponentJoints} playerProgress={reward} opponentProgress={opponentReward} cubes={snapshot.cubes} cubeOwners={cubeOwners} collision={snapshot.collision} running={running} taskId={selectedTaskId} /></div>
           <div className="stage-toolbar">
             <div className={`live-pill ${engineStatus}`}><i /> {statusLabel}</div>
             <div className="camera-pills" aria-label="Change perspective">
@@ -318,10 +335,16 @@ export function ArenaApp() {
             <div className="versus"><b>{matchCall}</b><span>{isHeist ? `${Math.max(0, Math.ceil(matchLength - elapsed))}s LEFT` : `${elapsed.toFixed(1)}s`}</span></div>
             <div className="duelist blaze"><span>BLAZE <i /></span><strong>{blazeScore}</strong><small>{isHeist ? "CUBES SECURED" : "ORANGE CORNER"}</small></div>
           </div>
+          {snapshot.collision.kind !== "none" && (
+            <div className={`contact-callout ${snapshot.collision.kind}`} role="status">
+              <b>{snapshot.collision.kind === "strike" ? `${snapshot.collision.attacker?.toUpperCase()} STRIKE` : "ARMS BLOCKED"}</b>
+              <span>{snapshot.collision.force.toFixed(1)} N · {snapshot.collision.atlasLink} ↔ {snapshot.collision.blazeLink}</span>
+            </div>
+          )}
           <div className="competitor-labels" aria-hidden="true"><span className="atlas-label"><i />ATLAS</span><span className="blaze-label">BLAZE<i /></span></div>
           <div className="scene-caption">
             <div><span className="eyebrow">COMPETITORS</span><strong>2× SO-101 · Face-to-face</strong></div>
-            <div><span className="eyebrow">PHYSICS</span><strong>MuJoCo · 200 Hz</strong></div>
+            <div><span className="eyebrow">PHYSICS</span><strong>MuJoCo · 200 Hz · {combatStats.blocks} blocks</strong></div>
             <div><span className="eyebrow">ENVIRONMENT</span><strong>{selectedTask.environment}</strong></div>
           </div>
         </section>
@@ -333,8 +356,8 @@ export function ArenaApp() {
           <div className="setup-group"><label>MATCH LENGTH <b>{matchLength} SEC{isHeist ? " · FIXED" : ""}</b></label><input type="range" min="10" max="60" step="5" value={matchLength} disabled={isHeist} onChange={(event) => setEpisodeLength(Number(event.target.value))} aria-label="Match length" /><div className="range-labels"><span>{isHeist ? "ONE-MINUTE MATCH" : "10s"}</span><span>60s</span></div></div>
           <button className="setup-group randomization-button" onClick={() => setRandomization((value) => !value)} aria-pressed={randomization}><label>DOMAIN RANDOMIZATION <b>{randomization ? "ON" : "OFF"}</b></label><span className="random-grid"><span><i />Lighting</span><span><i />Friction</span><span><i />Object pose</span><span><i />Camera</span></span></button>
           <div className="episode-progress"><span><b>{running ? matchCall : elapsed >= matchLength ? resultLabel : "READY TO RACE"}</b><i>{elapsed.toFixed(1)} / {matchLength}s</i></span><div><i style={{ width: `${progress}%` }} /></div></div>
-          <div className="run-actions"><button className={`run-button ${running ? "pause" : ""}`} onClick={toggleRun}><span>{running ? "Ⅱ" : "▶"}</span> {running ? "PAUSE MATCH" : elapsed >= matchLength ? "RACE AGAIN" : elapsed > 0 ? "RESUME MATCH" : "START MATCH"}<small>SPACE</small></button><button className="reset-button" onClick={resetEpisode} aria-label="Reset match">↺</button></div>
-          <div className="metric-strip competitor-metrics"><div><span>ATLAS {isHeist ? "CUBES" : "SCORE"}</span><strong>{atlasScore}</strong></div><div><span>BLAZE {isHeist ? "CUBES" : "SCORE"}</span><strong>{blazeScore}</strong></div></div>
+          <div className="run-actions"><button className={`run-button ${running ? "pause" : ""}`} onClick={toggleRun}><span>{running ? "Ⅱ" : "▶"}</span> {running ? "PAUSE MATCH" : elapsed >= matchLength ? "RACE AGAIN" : elapsed > 0 ? "RESUME MATCH" : "START MATCH"}<small>SPACE</small></button><button className="reset-button" onClick={() => resetEpisode()} aria-label="Reset match">↺</button></div>
+          <div className="metric-strip competitor-metrics"><div><span>ATLAS {isHeist ? "CUBES" : "SCORE"} · {combatStats.atlas} HITS</span><strong>{atlasScore}</strong></div><div><span>BLAZE {isHeist ? "CUBES" : "SCORE"} · {combatStats.blaze} HITS</span><strong>{blazeScore}</strong></div></div>
           <p className="hint">Use the perspective buttons to watch either robot · <kbd>X</kbd> reset</p>
         </aside>
       </section>

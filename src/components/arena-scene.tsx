@@ -5,6 +5,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import * as THREE from "three";
+import type { DuelCollision, PhysicsCube } from "@/lib/mujoco-engine";
 
 export type CameraPreset = "arena" | "atlas" | "blaze" | "overhead";
 export type CubeOwner = "neutral" | "atlas" | "blaze";
@@ -15,7 +16,9 @@ type ArenaSceneProps = {
   opponentJoints: number[];
   playerProgress: number;
   opponentProgress: number;
+  cubes: PhysicsCube[];
   cubeOwners: CubeOwner[];
+  collision: DuelCollision;
   running: boolean;
   taskId: string;
 };
@@ -28,6 +31,7 @@ type JointNode = {
 
 const MODEL_ROOT = "/models/robotstudio_so101";
 const MODEL_SCALE = 2.05;
+const ROBOT_BASE_OFFSET = 0.32;
 const JOINT_ORDER = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"];
 const ATLAS_COLOR = new THREE.Color("#2f8062");
 const BLAZE_COLOR = new THREE.Color("#ef6b42");
@@ -261,40 +265,20 @@ function ProgressRing({ color, position, progress }: { color: string; position: 
   );
 }
 
-const NEUTRAL_CUBE_POSITIONS: [number, number, number][] = Array.from({ length: 9 }, (_, index) => [
-  (index % 3 - 1) * 0.1,
-  0.045,
-  (Math.floor(index / 3) - 1) * 0.11,
-]);
-
-function ownedCubePosition(owner: Exclude<CubeOwner, "neutral">, sideIndex: number): [number, number, number] {
-  const row = Math.floor(sideIndex / 3);
-  const lane = sideIndex % 3 - 1;
-  const direction = owner === "atlas" ? -1 : 1;
-  return [direction * (0.34 + row * 0.09), 0.045, lane * 0.105];
-}
-
-function HeistCube({ index, owner, sideIndex, running }: { index: number; owner: CubeOwner; sideIndex: number; running: boolean }) {
+function HeistCube({ cubeState, owner }: { cubeState: PhysicsCube; owner: CubeOwner }) {
   const cube = useRef<THREE.Mesh>(null);
-  const target = useMemo(() => {
-    const position = owner === "neutral" ? NEUTRAL_CUBE_POSITIONS[index] : ownedCubePosition(owner, sideIndex);
-    return new THREE.Vector3(...position);
-  }, [index, owner, sideIndex]);
   const color = owner === "atlas" ? "#66a98b" : owner === "blaze" ? "#f08461" : "#e2c45d";
 
   useFrame((_, delta) => {
     if (!cube.current) return;
-    const horizontalDistance = Math.hypot(cube.current.position.x - target.x, cube.current.position.z - target.z);
-    const carriedTarget = target.clone();
-    carriedTarget.y += Math.min(0.16, horizontalDistance * 0.52);
-    cube.current.position.lerp(carriedTarget, 1 - Math.exp(-delta * 3.3));
-    cube.current.rotation.y += delta * (running ? 0.9 : 0.15);
-    cube.current.rotation.x = THREE.MathUtils.lerp(cube.current.rotation.x, horizontalDistance > 0.03 ? 0.25 : 0, 1 - Math.exp(-delta * 5));
+    const smoothing = 1 - Math.exp(-delta * 24);
+    cube.current.position.lerp(new THREE.Vector3(...cubeState.position), smoothing);
+    cube.current.quaternion.slerp(new THREE.Quaternion(...cubeState.quaternion), smoothing);
   });
 
   return (
-    <mesh ref={cube} position={NEUTRAL_CUBE_POSITIONS[index]} castShadow receiveShadow>
-      <boxGeometry args={[0.085, 0.085, 0.085]} />
+    <mesh ref={cube} position={cubeState.position} quaternion={cubeState.quaternion} castShadow receiveShadow>
+      <boxGeometry args={[0.04, 0.04, 0.04]} />
       <meshStandardMaterial color={color} roughness={0.48} metalness={0.04} />
     </mesh>
   );
@@ -315,7 +299,7 @@ function TerritoryZone({ color, x }: { color: string; x: number }) {
   );
 }
 
-function HeistObjects({ cubeOwners, running }: Pick<ArenaSceneProps, "cubeOwners" | "running">) {
+function HeistObjects({ cubes, cubeOwners }: Pick<ArenaSceneProps, "cubes" | "cubeOwners">) {
   return (
     <group>
       <TerritoryZone color="#2f8062" x={-0.37} />
@@ -323,10 +307,11 @@ function HeistObjects({ cubeOwners, running }: Pick<ArenaSceneProps, "cubeOwners
       <group position={[0, 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <mesh><ringGeometry args={[0.17, 0.18, 64]} /><meshBasicMaterial color="#8a8c85" transparent opacity={0.5} side={THREE.DoubleSide} /></mesh>
       </group>
-      {cubeOwners.map((owner, index) => {
-        const sideIndex = cubeOwners.slice(0, index).filter((cubeOwner) => cubeOwner === owner).length;
-        return <HeistCube key={index} index={index} owner={owner} sideIndex={sideIndex} running={running} />;
-      })}
+      <group scale={MODEL_SCALE} rotation={[-Math.PI / 2, 0, 0]}>
+        {cubes.map((cubeState, index) => (
+          <HeistCube key={index} cubeState={cubeState} owner={cubeOwners[index] ?? "neutral"} />
+        ))}
+      </group>
     </group>
   );
 }
@@ -369,8 +354,22 @@ function RaceObjects({ opponentProgress, playerProgress, running, taskId }: Pick
   );
 }
 
-function CompetitionObjects(props: Pick<ArenaSceneProps, "cubeOwners" | "opponentProgress" | "playerProgress" | "running" | "taskId">) {
-  return props.taskId === "heist" ? <HeistObjects cubeOwners={props.cubeOwners} running={props.running} /> : <RaceObjects {...props} />;
+function CompetitionObjects(props: Pick<ArenaSceneProps, "cubes" | "cubeOwners" | "opponentProgress" | "playerProgress" | "running" | "taskId">) {
+  return props.taskId === "heist" ? <HeistObjects cubes={props.cubes} cubeOwners={props.cubeOwners} /> : <RaceObjects {...props} />;
+}
+
+function ImpactMarker({ collision }: { collision: DuelCollision }) {
+  if (collision.kind === "none") return null;
+  const color = collision.attacker === "atlas" ? "#57b28c" : collision.attacker === "blaze" ? "#ff7048" : "#f1c75b";
+  return (
+    <group position={collision.position}>
+      <pointLight color={color} intensity={1.4} distance={0.22} decay={2} />
+      <mesh>
+        <sphereGeometry args={[0.012, 16, 12]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.2} />
+      </mesh>
+    </group>
+  );
 }
 
 const CAMERA_POSITIONS: Record<CameraPreset, THREE.Vector3> = {
@@ -402,16 +401,15 @@ function Scene(props: ArenaSceneProps) {
       <directionalLight position={[-2, 1.2, -1]} intensity={1.15} color="#b7d6c3" />
 
       {model && (
-        <>
-          <group position={[-0.57, 0, 0]} scale={MODEL_SCALE} rotation={[-Math.PI / 2, 0, 0]}>
+        <group scale={MODEL_SCALE} rotation={[-Math.PI / 2, 0, 0]}>
+          <group position={[-ROBOT_BASE_OFFSET, 0, 0]}>
             <CompetitorRobot accent={ATLAS_COLOR} joints={props.joints} source={model} />
           </group>
-          <group position={[0.57, 0, 0]} rotation={[0, Math.PI, 0]}>
-            <group scale={MODEL_SCALE} rotation={[-Math.PI / 2, 0, 0]}>
-              <CompetitorRobot accent={BLAZE_COLOR} joints={props.opponentJoints} source={model} />
-            </group>
+          <group position={[ROBOT_BASE_OFFSET, 0, 0]} rotation={[0, 0, Math.PI]}>
+            <CompetitorRobot accent={BLAZE_COLOR} joints={props.opponentJoints} source={model} />
           </group>
-        </>
+          <ImpactMarker collision={props.collision} />
+        </group>
       )}
 
       <CompetitionObjects {...props} />

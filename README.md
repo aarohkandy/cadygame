@@ -4,12 +4,13 @@ RoboArena is a browser-based training ground for robot policies. This first slic
 
 ## What is included
 
-- Three interactive tasks: Lift Cube, Stack Blocks, and Push to Target
-- The exact Google DeepMind MuJoCo Menagerie SO-101 mesh model with six controlled joints
+- Three head-to-head tasks: Cube Heist, Stack Blocks, and Push to Target
+- Two independently actuated copies of the Google DeepMind MuJoCo Menagerie SO-101 model
 - Google DeepMind's first-party MuJoCo WebAssembly runtime
 - The unmodified Menagerie MJCF, inertial properties, collision geometry, actuators, and joint limits
+- Physical arm-vs-arm blocking, force-based strike events, and nine rigid contested cubes in one MuJoCo world
 - Manual keyboard control, scripted baseline, and random exploration policies
-- Episode timing, rewards, contacts, simulation state, and season metrics
+- Physics-derived cube ownership, contact telemetry, combat stats, episode timing, and season metrics
 - Responsive arena UI for desktop and mobile
 
 ## Run locally
@@ -27,15 +28,23 @@ Open `http://localhost:3000`.
 npm run build
 ```
 
+## Physics tests
+
+```bash
+npm test
+```
+
+The integration suite compiles the real MJCF in MuJoCo WASM and verifies the dual actuator topology, collision-free reset pose, arm-vs-arm blocking forces, asymmetric strikes, and arm-to-cube contact.
+
 The app is statically exported and also prepares a lightweight hosting worker in `dist/`.
 
 ## Architecture
 
 - `src/components/arena-app.tsx` owns tasks, policies, episodes, and controls.
 - `src/components/arena-scene.tsx` parses the Menagerie MJCF and renders its STL hierarchy with React Three Fiber.
-- `src/lib/mujoco-engine.ts` is the physics boundary. Replace or extend this class when moving policy execution to a worker or remote trainer.
+- `src/lib/mujoco-engine.ts` is the physics boundary. It drives both arms, classifies block/strike contacts, and returns all nine rigid-body cube poses.
 - `public/models/robotstudio_so101/so101.xml` and its adjacent assets are the vendored Menagerie model.
-- `public/models/robotstudio_so101/arena.xml` is RoboArena's task-scene wrapper around the unmodified model.
+- `public/models/robotstudio_so101/arena.xml` attaches the unmodified model twice with namespaced joints and defines the shared collision world.
 
 The next natural step is to define a stable policy contract such as `reset(task)`, `act(observation)`, and `close()`, then run user policies in isolated workers against batched MuJoCo environments.
 
