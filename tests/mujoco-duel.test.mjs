@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import loadMujoco from "@mujoco/mujoco";
+import { solvePositionIK } from "../src/lib/task-space-ik.mjs";
 
 const MODEL_ROOT = path.resolve("public/models/robotstudio_so101");
 const START_POSE = [0, -0.62, 1.08, -0.48, 0, 0.72];
@@ -115,12 +116,48 @@ test("arena compiles as two independent arms and nine rigid cubes", () => {
   assert.equal(model.nv, 66);
   assert.ok(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY.value, "atlas_gripper") >= 0);
   assert.ok(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY.value, "blaze_gripper") >= 0);
+  assert.ok(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE.value, "atlas_gripperframe") >= 0);
   for (let index = 0; index < 9; index += 1) {
     assert.ok(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT.value, `cube_${index}_joint`) >= 0);
   }
 
   setArmState(START_POSE);
   assert.equal(inspectContacts().armContacts, 0, "reset pose must not start with interpenetrating arms");
+});
+
+test("task-space IK reaches a joystick target within the SO-101 limits", () => {
+  const ikData = new mujoco.MjData(model);
+  const siteId = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE.value, "atlas_gripperframe");
+  const limits = [
+    [-1.91986, 1.91986],
+    [-1.74533, 1.74533],
+    [-1.69, 1.69],
+    [-1.65806, 1.65806],
+  ].map(([min, max]) => ({ min, max }));
+  const positionFor = (joints) => {
+    joints.forEach((value, index) => {
+      ikData.qpos[index] = value;
+    });
+    ikData.qpos[4] = 0;
+    ikData.qpos[5] = 1.15;
+    mujoco.mj_kinematics(model, ikData);
+    return Array.from(ikData.site_xpos).slice(siteId * 3, siteId * 3 + 3);
+  };
+  try {
+    const target = [0.02, -0.06, 0.08];
+    const solution = solvePositionIK({
+      seed: START_POSE.slice(0, 4),
+      target,
+      limits,
+      positionFor,
+    });
+    assert.ok(solution.error < 0.002, `IK error should stay below 2 mm, received ${solution.error}`);
+    solution.joints.forEach((value, index) => {
+      assert.ok(value >= limits[index].min && value <= limits[index].max);
+    });
+  } finally {
+    ikData.delete();
+  }
 });
 
 test("simultaneous reach is physically blocked instead of passing through", () => {

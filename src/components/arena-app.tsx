@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArenaScene, type CameraPreset, type CubeOwner } from "@/components/arena-scene";
+import {
+  MANUAL_GRIPPER_TARGETS,
+  MANUAL_HOME_TARGET,
+  POLICY_FILE_ACCEPT,
+  UploadedPolicyRunner,
+  stepTaskSpaceTarget,
+} from "@/lib/arm-participation.mjs";
 import { CUBE_COUNT, MujocoEngine, START_POSE, type PhysicsSnapshot } from "@/lib/mujoco-engine";
 
 const TASKS = [
@@ -34,10 +41,9 @@ const TASKS = [
   },
 ] as const;
 
-const POLICIES = [
-  { name: "Manual control", detail: "Keyboard teleoperation" },
-  { name: "Reach & carry demo", detail: "Scripted capture policy" },
-  { name: "Random explorer", detail: "Joint-space exploration" },
+const POLICY_OPTIONS = [
+  { id: "demo", name: "Reach & carry", detail: "Built-in capture policy" },
+  { id: "random", name: "Random explorer", detail: "Joint-space exploration" },
 ] as const;
 
 const CAMERA_PRESETS: { id: CameraPreset; label: string }[] = [
@@ -70,10 +76,14 @@ const FALLBACK_SNAPSHOT: PhysicsSnapshot = {
     blazeLink: "",
     eventId: 0,
   },
+  atlasEndEffector: [...MANUAL_HOME_TARGET] as [number, number, number],
   simTime: 0,
 };
 
 type EngineStatus = "loading" | "ready" | "fallback";
+type ControlMode = "manual" | "policy";
+type PolicyChoice = (typeof POLICY_OPTIONS)[number]["id"] | "uploaded";
+type UploadState = { kind: "idle" | "loading" | "ready" | "error"; message: string };
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -127,7 +137,13 @@ function opponentPolicyTargets(task: string, elapsed: number) {
 export function ArenaApp() {
   const [selectedTaskId, setSelectedTaskId] = useState<(typeof TASKS)[number]["id"]>("heist");
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>("arena");
-  const [policyIndex, setPolicyIndex] = useState(1);
+  const [controlMode, setControlMode] = useState<ControlMode>("manual");
+  const [manualLifted, setManualLifted] = useState(true);
+  const [manualGripping, setManualGripping] = useState(false);
+  const [joystickVisual, setJoystickVisual] = useState({ x: 0, y: 0 });
+  const [policyChoice, setPolicyChoice] = useState<PolicyChoice>("demo");
+  const [uploadState, setUploadState] = useState<UploadState>({ kind: "idle", message: "No policy uploaded" });
+  const [uploadedPolicyName, setUploadedPolicyName] = useState("");
   const [episodeLength, setEpisodeLength] = useState(30);
   const [randomization, setRandomization] = useState(true);
   const [engineStatus, setEngineStatus] = useState<EngineStatus>("loading");
@@ -141,7 +157,17 @@ export function ArenaApp() {
   const [successes, setSuccesses] = useState(899);
   const [combatStats, setCombatStats] = useState({ atlas: 0, blaze: 0, blocks: 0 });
   const engineRef = useRef<MujocoEngine | null>(null);
+  const snapshotRef = useRef<PhysicsSnapshot>(FALLBACK_SNAPSHOT);
   const targetsRef = useRef<number[]>([...START_POSE]);
+  const manualTargetRef = useRef<[number, number, number]>(
+    [...MANUAL_HOME_TARGET] as [number, number, number],
+  );
+  const joystickRef = useRef({ x: 0, y: 0 });
+  const manualKeysRef = useRef(new Set<string>());
+  const manualLiftedRef = useRef(true);
+  const manualGrippingRef = useRef(false);
+  const uploadedPolicyRef = useRef<InstanceType<typeof UploadedPolicyRunner> | null>(null);
+  const uploadRequestRef = useRef(0);
   const elapsedRef = useRef(0);
   const lastCollisionEventRef = useRef(0);
   const selectedTask = useMemo(() => TASKS.find((task) => task.id === selectedTaskId) ?? TASKS[0], [selectedTaskId]);
@@ -161,11 +187,21 @@ export function ArenaApp() {
     setOpponentReward(0);
     setCombatStats({ atlas: 0, blaze: 0, blocks: 0 });
     lastCollisionEventRef.current = 0;
+    joystickRef.current = { x: 0, y: 0 };
+    manualKeysRef.current.clear();
+    manualLiftedRef.current = true;
+    manualGrippingRef.current = false;
+    setJoystickVisual({ x: 0, y: 0 });
+    setManualLifted(true);
+    setManualGripping(false);
     updateTargets([...START_POSE]);
+    uploadedPolicyRef.current?.reset({ task: taskId });
     const next = engineRef.current?.reset({
       cubesEnabled: taskId === "heist",
       randomizeCubes: randomization && taskId === "heist",
     }) ?? FALLBACK_SNAPSHOT;
+    manualTargetRef.current = [...next.atlasEndEffector];
+    snapshotRef.current = next;
     setSnapshot(next);
   }, [randomization, selectedTaskId, updateTargets]);
 
@@ -178,7 +214,10 @@ export function ArenaApp() {
           return;
         }
         engineRef.current = engine;
-        setSnapshot(engine.snapshot());
+        const initialSnapshot = engine.snapshot();
+        manualTargetRef.current = [...initialSnapshot.atlasEndEffector];
+        snapshotRef.current = initialSnapshot;
+        setSnapshot(initialSnapshot);
         setEngineVersion(engine.version);
         setEngineStatus("ready");
       })
@@ -189,6 +228,8 @@ export function ArenaApp() {
       alive = false;
       engineRef.current?.dispose();
       engineRef.current = null;
+      uploadedPolicyRef.current?.dispose();
+      uploadedPolicyRef.current = null;
     };
   }, []);
 
@@ -198,16 +239,55 @@ export function ArenaApp() {
       const nextElapsed = elapsedRef.current + 0.016;
       elapsedRef.current = nextElapsed;
 
-      const scripted = policyTargets(policyIndex, selectedTaskId, nextElapsed);
+      let activeTargets = targetsRef.current;
+      if (controlMode === "manual") {
+        const keyboardX = Number(manualKeysRef.current.has("right")) - Number(manualKeysRef.current.has("left"));
+        const keyboardY = Number(manualKeysRef.current.has("back")) - Number(manualKeysRef.current.has("forward"));
+        manualTargetRef.current = stepTaskSpaceTarget(
+          manualTargetRef.current,
+          {
+            x: joystickRef.current.x + keyboardX,
+            y: joystickRef.current.y + keyboardY,
+          },
+          0.016,
+          manualLiftedRef.current,
+        ) as [number, number, number];
+        activeTargets = engineRef.current?.solveAtlasIK(
+          manualTargetRef.current,
+          activeTargets,
+          manualGrippingRef.current
+            ? MANUAL_GRIPPER_TARGETS.closed
+            : MANUAL_GRIPPER_TARGETS.open,
+        ) ?? activeTargets;
+      } else if (policyChoice === "uploaded" && uploadedPolicyRef.current) {
+        const current = snapshotRef.current;
+        activeTargets = uploadedPolicyRef.current.nextTargets({
+          time: nextElapsed,
+          task: selectedTaskId,
+          joints: [...current.joints],
+          opponentJoints: [...current.opponentJoints],
+          cubes: current.cubes.map((cube) => ({
+            position: [...cube.position],
+            quaternion: [...cube.quaternion],
+          })),
+          contacts: current.contacts,
+          armContacts: current.armContacts,
+          cubeContacts: current.cubeContacts,
+          collision: { ...current.collision },
+        });
+      } else {
+        activeTargets = policyTargets(policyChoice === "random" ? 2 : 1, selectedTaskId, nextElapsed)
+          ?? targetsRef.current;
+      }
+      updateTargets(activeTargets);
       const opponentTargets = opponentPolicyTargets(selectedTaskId, nextElapsed);
-      if (scripted) updateTargets(scripted);
-      const activeTargets = scripted ?? targetsRef.current;
       const nextSnapshot = engineRef.current?.step(activeTargets, opponentTargets, 4) ?? {
         ...FALLBACK_SNAPSHOT,
         joints: activeTargets,
         opponentJoints: opponentTargets,
         simTime: nextElapsed,
       };
+      snapshotRef.current = nextSnapshot;
       setSnapshot(nextSnapshot);
 
       if (nextSnapshot.collision.eventId > 0 && nextSnapshot.collision.eventId !== lastCollisionEventRef.current) {
@@ -246,16 +326,90 @@ export function ArenaApp() {
       }
     }, 16);
     return () => window.clearInterval(timer);
-  }, [matchLength, policyIndex, running, selectedTaskId, updateTargets]);
+  }, [controlMode, matchLength, policyChoice, running, selectedTaskId, updateTargets]);
 
   const toggleRun = useCallback(() => {
     if (elapsedRef.current >= matchLength) resetEpisode();
     setRunning((value) => !value);
   }, [matchLength, resetEpisode]);
 
+  const selectControlMode = useCallback((mode: ControlMode) => {
+    joystickRef.current = { x: 0, y: 0 };
+    manualKeysRef.current.clear();
+    setJoystickVisual({ x: 0, y: 0 });
+    if (mode === "manual") {
+      const current = snapshotRef.current;
+      manualTargetRef.current = [...current.atlasEndEffector];
+      const lifted = current.atlasEndEffector[2] > 0.12;
+      const gripping = (current.joints[5] ?? MANUAL_GRIPPER_TARGETS.open) < 0.5;
+      manualLiftedRef.current = lifted;
+      manualGrippingRef.current = gripping;
+      setManualLifted(lifted);
+      setManualGripping(gripping);
+    }
+    updateTargets([...snapshotRef.current.joints]);
+    setControlMode(mode);
+  }, [updateTargets]);
+
+  const toggleManualLift = useCallback(() => {
+    const next = !manualLiftedRef.current;
+    manualLiftedRef.current = next;
+    setManualLifted(next);
+  }, []);
+
+  const toggleManualGrip = useCallback(() => {
+    const next = !manualGrippingRef.current;
+    manualGrippingRef.current = next;
+    setManualGripping(next);
+  }, []);
+
+  const homeManualArm = useCallback(() => {
+    joystickRef.current = { x: 0, y: 0 };
+    manualKeysRef.current.clear();
+    manualTargetRef.current = [...MANUAL_HOME_TARGET] as [number, number, number];
+    manualLiftedRef.current = true;
+    manualGrippingRef.current = false;
+    setJoystickVisual({ x: 0, y: 0 });
+    setManualLifted(true);
+    setManualGripping(false);
+    updateTargets([...START_POSE]);
+  }, [updateTargets]);
+
+  const updateJoystick = useCallback((element: HTMLElement, clientX: number, clientY: number) => {
+    const bounds = element.getBoundingClientRect();
+    let x = (clientX - bounds.left - bounds.width / 2) / (bounds.width * 0.38);
+    let y = (clientY - bounds.top - bounds.height / 2) / (bounds.height * 0.38);
+    const magnitude = Math.hypot(x, y);
+    if (magnitude < 0.1) {
+      x = 0;
+      y = 0;
+    } else if (magnitude > 1) {
+      x /= magnitude;
+      y /= magnitude;
+    }
+    joystickRef.current = { x, y };
+    setJoystickVisual({ x, y });
+  }, []);
+
+  const releaseJoystick = useCallback(() => {
+    joystickRef.current = { x: 0, y: 0 };
+    setJoystickVisual({ x: 0, y: 0 });
+  }, []);
+
   useEffect(() => {
+    const movementKeys: Record<string, string> = {
+      ArrowLeft: "left", KeyA: "left",
+      ArrowRight: "right", KeyD: "right",
+      ArrowUp: "forward", KeyW: "forward",
+      ArrowDown: "back", KeyS: "back",
+    };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) return;
+      if (
+        event.target instanceof HTMLInputElement
+        || event.target instanceof HTMLButtonElement
+        || event.target instanceof HTMLTextAreaElement
+        || event.target instanceof HTMLSelectElement
+      ) return;
       if (event.code === "Space") {
         event.preventDefault();
         toggleRun();
@@ -265,24 +419,73 @@ export function ArenaApp() {
         resetEpisode();
         return;
       }
-      if (policyIndex !== 0) return;
-      const controls: Record<string, [number, number]> = {
-        a: [0, -0.06], d: [0, 0.06], w: [1, 0.06], s: [1, -0.06],
-        ArrowUp: [2, 0.06], ArrowDown: [2, -0.06], q: [3, 0.06], e: [3, -0.06],
-        g: [5, -0.08], h: [5, 0.08],
-      };
-      const control = controls[event.key] ?? controls[event.key.toLowerCase()];
-      if (!control) return;
+      if (controlMode !== "manual" || !running) return;
+      const movement = movementKeys[event.code];
+      if (movement) {
+        event.preventDefault();
+        manualKeysRef.current.add(movement);
+        return;
+      }
+      if (event.repeat) return;
+      if (event.code === "KeyL") toggleManualLift();
+      else if (event.code === "KeyG") toggleManualGrip();
+      else if (event.code === "KeyR") homeManualArm();
+      else return;
       event.preventDefault();
-      const [joint, delta] = control;
-      const limits = [[-1.91, 1.91], [-1.74, 1.74], [-1.69, 1.69], [-1.65, 1.65], [-2.74, 2.84], [-0.17, 1.74]];
-      const next = [...targetsRef.current];
-      next[joint] = clamp(next[joint] + delta, limits[joint][0], limits[joint][1]);
-      updateTargets(next);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      const movement = movementKeys[event.code];
+      if (movement) manualKeysRef.current.delete(movement);
+    };
+    const clearControls = () => {
+      manualKeysRef.current.clear();
+      releaseJoystick();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [policyIndex, resetEpisode, toggleRun, updateTargets]);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", clearControls);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", clearControls);
+    };
+  }, [controlMode, homeManualArm, releaseJoystick, resetEpisode, running, toggleManualGrip, toggleManualLift, toggleRun]);
+
+  useEffect(() => {
+    if (!running || controlMode !== "manual") {
+      manualKeysRef.current.clear();
+      joystickRef.current = { x: 0, y: 0 };
+    }
+  }, [controlMode, running]);
+
+  const uploadPolicy = useCallback(async (file: File) => {
+    const requestId = ++uploadRequestRef.current;
+    setUploadState({ kind: "loading", message: `Checking ${file.name}…` });
+    try {
+      const runner = await UploadedPolicyRunner.fromFile(file);
+      if (requestId !== uploadRequestRef.current) {
+        runner.dispose();
+        return;
+      }
+      runner.onError((message) => {
+        setUploadState({ kind: "error", message });
+        setRunning(false);
+      });
+      uploadedPolicyRef.current?.dispose();
+      uploadedPolicyRef.current = runner;
+      runner.reset({ task: selectedTaskId });
+      setUploadedPolicyName(runner.name);
+      setUploadState({ kind: "ready", message: `${runner.kind === "module" ? "Worker policy" : "Trajectory"} ready` });
+      setPolicyChoice("uploaded");
+      selectControlMode("policy");
+    } catch (error) {
+      if (requestId !== uploadRequestRef.current) return;
+      setUploadState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Policy upload failed",
+      });
+    }
+  }, [selectControlMode, selectedTaskId]);
 
   const chooseTask = (taskId: (typeof TASKS)[number]["id"]) => {
     setSelectedTaskId(taskId);
@@ -351,14 +554,96 @@ export function ArenaApp() {
 
         <aside className="control-panel">
           <div className="control-heading"><span className="eyebrow">MATCH CONTROL</span><h2>Head-to-head</h2></div>
-          <div className="matchup-card" id="competitors"><span className="matchup-team atlas"><i />ATLAS<small>YOUR POLICY</small></span><b>VS</b><span className="matchup-team blaze">BLAZE<i /><small>ADAPTIVE RIVAL</small></span></div>
-          <div className="setup-group"><label>ATLAS POLICY <b>{policyIndex === 0 ? "TELEOP" : "BASELINE"}</b></label><button className="select-row" onClick={() => setPolicyIndex((policyIndex + 1) % POLICIES.length)}><span className="policy-dot">π</span><span><strong>{POLICIES[policyIndex].name}</strong><small>{POLICIES[policyIndex].detail}</small></span><b>⌄</b></button></div>
+          <div className="matchup-card" id="competitors"><span className="matchup-team atlas"><i />ATLAS<small>{controlMode === "manual" ? "YOU · MANUAL" : "YOUR POLICY"}</small></span><b>VS</b><span className="matchup-team blaze">BLAZE<i /><small>ADAPTIVE RIVAL</small></span></div>
+          <div className="setup-group participation-group">
+            <label>ATLAS INPUT <b>{controlMode === "manual" ? "HAND CONTROL" : "POLICY"}</b></label>
+            <div className="participation-tabs" role="group" aria-label="Choose how to control Atlas">
+              <button className={controlMode === "manual" ? "active" : ""} onClick={() => selectControlMode("manual")} aria-pressed={controlMode === "manual"}><span>✦</span> OPERATE BY HAND</button>
+              <button className={controlMode === "policy" ? "active" : ""} onClick={() => selectControlMode("policy")} aria-pressed={controlMode === "policy"}><span>π</span> RUN A POLICY</button>
+            </div>
+          </div>
+          {controlMode === "manual" ? (
+            <section className="manual-console" aria-label="Manual SO-101 controls">
+              <div className="console-heading"><span><b>JOYSTICK DRIVE</b><small>One stick · three actions</small></span><i className={running ? "armed" : ""}>{running ? "LIVE" : "START MATCH"}</i></div>
+              <div
+                className={`task-joystick ${running ? "live" : "locked"}`}
+                role="group"
+                aria-label="Move the Atlas gripper across the table"
+                aria-disabled={!running}
+                onContextMenu={(event) => event.preventDefault()}
+                onPointerCancel={releaseJoystick}
+                onPointerDown={(event) => {
+                  if (!running) return;
+                  event.preventDefault();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  updateJoystick(event.currentTarget, event.clientX, event.clientY);
+                }}
+                onPointerMove={(event) => {
+                  if (running && event.currentTarget.hasPointerCapture(event.pointerId)) {
+                    updateJoystick(event.currentTarget, event.clientX, event.clientY);
+                  }
+                }}
+                onPointerUp={(event) => {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                  }
+                  releaseJoystick();
+                }}
+              >
+                <span className="joystick-direction top">FAR</span>
+                <span className="joystick-direction right">RIVAL</span>
+                <span className="joystick-direction bottom">NEAR</span>
+                <span className="joystick-direction left">HOME</span>
+                <div className="joystick-orbit"><i /><i /></div>
+                <div
+                  className="joystick-knob"
+                  style={{ transform: `translate(${joystickVisual.x * 39}px, ${joystickVisual.y * 39}px)` }}
+                ><span>MOVE</span></div>
+              </div>
+              <div className="manual-actions" aria-label="Manual arm actions">
+                <button className={!manualLifted ? "active" : ""} disabled={!running} onClick={toggleManualLift} aria-pressed={!manualLifted}><span>{manualLifted ? "↓" : "↑"}</span><strong>{manualLifted ? "LOWER" : "LIFT"}</strong><small>{manualLifted ? "TO CUBE" : "TO TRAVEL"} · L</small></button>
+                <button className={manualGripping ? "active grip" : ""} disabled={!running} onClick={toggleManualGrip} aria-pressed={manualGripping}><span>{manualGripping ? "◇" : "◆"}</span><strong>{manualGripping ? "DROP" : "GRAB"}</strong><small>{manualGripping ? "OPEN" : "CLOSE"} · G</small></button>
+                <button disabled={!running} onClick={homeManualArm}><span>⌂</span><strong>HOME</strong><small>SAFE POSE · R</small></button>
+              </div>
+              <div className="manual-state" aria-live="polite"><span><i className={manualLifted ? "lifted" : ""} />{manualLifted ? "TRAVEL HEIGHT" : "CUBE HEIGHT"}</span><span><i className={manualGripping ? "gripping" : ""} />{manualGripping ? "GRIP CLOSED" : "GRIP OPEN"}</span></div>
+              <p className="control-note">Drag the stick or use WASD / arrow keys. MuJoCo inverse kinematics coordinates all six joints for you.</p>
+            </section>
+          ) : (
+            <section className="policy-console" aria-label="Policy controls">
+              <div className="console-heading"><span><b>POLICY SOURCE</b><small>Choose built-in or upload yours</small></span><i className={uploadState.kind === "ready" ? "armed" : ""}>{policyChoice === "uploaded" ? "CUSTOM" : "BUILT-IN"}</i></div>
+              <div className="policy-options">
+                {POLICY_OPTIONS.map((policy) => (
+                  <button className={policyChoice === policy.id ? "selected" : ""} onClick={() => setPolicyChoice(policy.id)} key={policy.id} aria-pressed={policyChoice === policy.id}>
+                    <span className="policy-dot">π</span><span><strong>{policy.name}</strong><small>{policy.detail}</small></span><i>✓</i>
+                  </button>
+                ))}
+                {uploadedPolicyName && (
+                  <button className={policyChoice === "uploaded" ? "selected" : ""} onClick={() => {
+                    uploadedPolicyRef.current?.reset({ task: selectedTaskId });
+                    setPolicyChoice("uploaded");
+                  }} aria-pressed={policyChoice === "uploaded"}>
+                    <span className="policy-dot upload">↑</span><span><strong>{uploadedPolicyName}</strong><small>{uploadState.message}</small></span><i>✓</i>
+                  </button>
+                )}
+              </div>
+              <label className={`upload-policy-button ${uploadState.kind === "loading" ? "loading" : ""}`}>
+                <input type="file" accept={POLICY_FILE_ACCEPT} disabled={uploadState.kind === "loading"} onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  if (file) void uploadPolicy(file);
+                  event.currentTarget.value = "";
+                }} />
+                <span>↑</span>{uploadState.kind === "loading" ? "VALIDATING…" : "UPLOAD YOUR POLICY"}<small>.JS · .MJS · .JSON</small>
+              </label>
+              <div className={`upload-status ${uploadState.kind}`} role="status"><i />{uploadState.message}</div>
+              <p className="control-note">JavaScript policies run locally in a dedicated worker. JSON trajectories are validated against all joint limits. <a href="/policies/example-policy.js" download>Example policy ↓</a></p>
+            </section>
+          )}
           <div className="setup-group"><label>MATCH LENGTH <b>{matchLength} SEC{isHeist ? " · FIXED" : ""}</b></label><input type="range" min="10" max="60" step="5" value={matchLength} disabled={isHeist} onChange={(event) => setEpisodeLength(Number(event.target.value))} aria-label="Match length" /><div className="range-labels"><span>{isHeist ? "ONE-MINUTE MATCH" : "10s"}</span><span>60s</span></div></div>
           <button className="setup-group randomization-button" onClick={() => setRandomization((value) => !value)} aria-pressed={randomization}><label>DOMAIN RANDOMIZATION <b>{randomization ? "ON" : "OFF"}</b></label><span className="random-grid"><span><i />Lighting</span><span><i />Friction</span><span><i />Object pose</span><span><i />Camera</span></span></button>
           <div className="episode-progress"><span><b>{running ? matchCall : elapsed >= matchLength ? resultLabel : "READY TO RACE"}</b><i>{elapsed.toFixed(1)} / {matchLength}s</i></span><div><i style={{ width: `${progress}%` }} /></div></div>
           <div className="run-actions"><button className={`run-button ${running ? "pause" : ""}`} onClick={toggleRun}><span>{running ? "Ⅱ" : "▶"}</span> {running ? "PAUSE MATCH" : elapsed >= matchLength ? "RACE AGAIN" : elapsed > 0 ? "RESUME MATCH" : "START MATCH"}<small>SPACE</small></button><button className="reset-button" onClick={() => resetEpisode()} aria-label="Reset match">↺</button></div>
           <div className="metric-strip competitor-metrics"><div><span>ATLAS {isHeist ? "CUBES" : "SCORE"} · {combatStats.atlas} HITS</span><strong>{atlasScore}</strong></div><div><span>BLAZE {isHeist ? "CUBES" : "SCORE"} · {combatStats.blaze} HITS</span><strong>{blazeScore}</strong></div></div>
-          <p className="hint">Use the perspective buttons to watch either robot · <kbd>X</kbd> reset</p>
+          <p className="hint">{controlMode === "manual" ? "Drag the joystick while the match is live" : "Your selected policy controls Atlas"} · <kbd>X</kbd> reset</p>
         </aside>
       </section>
     </main>

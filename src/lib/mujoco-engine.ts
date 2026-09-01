@@ -1,4 +1,6 @@
 import type { MainModule, MjData, MjModel, MjVFS } from "@mujoco/mujoco";
+import { JOINT_CONTROLS } from "@/lib/arm-participation.mjs";
+import { solvePositionIK } from "@/lib/task-space-ik.mjs";
 
 export type Competitor = "atlas" | "blaze";
 export type CollisionKind = "none" | "block" | "strike";
@@ -27,6 +29,7 @@ export type PhysicsSnapshot = {
   armContacts: number;
   cubeContacts: number;
   collision: DuelCollision;
+  atlasEndEffector: [number, number, number];
   simTime: number;
 };
 
@@ -98,7 +101,9 @@ export class MujocoEngine {
   private module: MainModule;
   private model: MjModel;
   private data: MjData;
+  private ikData: MjData;
   private vfs: MjVFS;
+  private atlasGripperSiteId: number;
   private bodyNames: string[];
   private geomCompetitors: (Competitor | null)[];
   private geomIsCube: boolean[];
@@ -116,8 +121,15 @@ export class MujocoEngine {
     this.module = module;
     this.model = model;
     this.data = data;
+    this.ikData = new module.MjData(model);
     this.vfs = vfs;
     this.version = module.mj_versionString();
+    this.atlasGripperSiteId = module.mj_name2id(
+      model,
+      module.mjtObj.mjOBJ_SITE.value,
+      "atlas_gripperframe",
+    );
+    if (this.atlasGripperSiteId < 0) throw new Error("MuJoCo atlas_gripperframe site is missing");
     this.bodyNames = Array.from({ length: model.nbody }, (_, bodyId) =>
       module.mj_id2name(model, module.mjtObj.mjOBJ_BODY.value, bodyId) ?? "",
     );
@@ -181,10 +193,12 @@ export class MujocoEngine {
   reset(options: ResetOptions = {}): PhysicsSnapshot {
     const { cubesEnabled = true, randomizeCubes = false } = options;
     this.module.mj_resetData(this.model, this.data);
+    this.module.mj_resetData(this.model, this.ikData);
     for (let arm = 0; arm < 2; arm += 1) {
       START_POSE.forEach((value, index) => {
         this.data.qpos[arm * JOINTS_PER_ARM + index] = value;
         this.data.ctrl[arm * JOINTS_PER_ARM + index] = value;
+        this.ikData.qpos[arm * JOINTS_PER_ARM + index] = value;
       });
     }
     this.cubeQposAddresses.forEach((address, index) => {
@@ -258,14 +272,47 @@ export class MujocoEngine {
       armContacts: this.contactSummary.armContacts,
       cubeContacts: this.contactSummary.cubeContacts,
       collision: { ...this.contactSummary.collision },
+      atlasEndEffector: this.readAtlasEndEffector(this.data),
       simTime: this.data.time,
     };
+  }
+
+  solveAtlasIK(target: [number, number, number], seed: number[], gripper: number) {
+    const jointLimits = JOINT_CONTROLS.slice(0, 4).map(({ min, max }) => ({ min, max }));
+    const gripperTarget = Math.min(
+      JOINT_CONTROLS[5].max,
+      Math.max(JOINT_CONTROLS[5].min, gripper),
+    );
+    const solution = solvePositionIK({
+      seed: Array.from({ length: 4 }, (_, index) => seed[index] ?? START_POSE[index]),
+      target,
+      limits: jointLimits,
+      positionFor: (joints) => {
+        joints.forEach((value, index) => {
+          this.ikData.qpos[index] = value;
+        });
+        this.ikData.qpos[4] = 0;
+        this.ikData.qpos[5] = gripperTarget;
+        this.module.mj_kinematics(this.model, this.ikData);
+        return this.readAtlasEndEffector(this.ikData);
+      },
+    });
+    return [...solution.joints, 0, gripperTarget];
   }
 
   private writeControls(targets: number[], offset: number) {
     for (let index = 0; index < Math.min(targets.length, JOINTS_PER_ARM); index += 1) {
       this.data.ctrl[offset + index] = targets[index];
     }
+  }
+
+  private readAtlasEndEffector(data: MjData): [number, number, number] {
+    const offset = this.atlasGripperSiteId * 3;
+    return [
+      data.site_xpos[offset] ?? 0,
+      data.site_xpos[offset + 1] ?? 0,
+      data.site_xpos[offset + 2] ?? 0,
+    ];
   }
 
   private readContacts(): ContactSummary {
@@ -356,6 +403,7 @@ export class MujocoEngine {
   }
 
   dispose() {
+    this.ikData.delete();
     this.data.delete();
     this.model.delete();
     this.vfs.delete();
