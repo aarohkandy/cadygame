@@ -37,15 +37,88 @@ const ROBOT_BASE_OFFSET = 0.32;
 const JOINT_ORDER = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"];
 const ATLAS_COLOR = new THREE.Color("#2f8062");
 const BLAZE_COLOR = new THREE.Color("#ef6b42");
-const MAX_IMPACT_SPARKS = 36;
+const MAX_IMPACT_SPARKS = 96;
+const MAX_IMPACT_STREAKS = 96;
+const FLOOR_Z = 0.004;
 
 type ImpactSpark = {
   age: number;
   color: THREE.Color;
+  heat: number;
   life: number;
   position: THREE.Vector3;
+  size: number;
   velocity: THREE.Vector3;
 };
+
+type ImpactFlash = {
+  age: number;
+  color: THREE.Color;
+  intensity: number;
+  life: number;
+  position: THREE.Vector3;
+  radius: number;
+};
+
+const _heatMid = new THREE.Color("#ff8a2b");
+const _heatHot = new THREE.Color("#ffe56a");
+
+function heatColor(heat: number, tint: THREE.Color, target: THREE.Color) {
+  // White-hot → yellow → orange → ember, with a light team tint at the end.
+  if (heat > 0.75) {
+    target.setRGB(1, 1, 0.92).lerp(_heatHot, 1 - (heat - 0.75) / 0.25);
+  } else if (heat > 0.4) {
+    target.copy(_heatHot).lerp(_heatMid, 1 - (heat - 0.4) / 0.35);
+  } else {
+    target.copy(_heatMid).lerp(tint, 1 - heat / 0.4).multiplyScalar(0.55 + heat);
+  }
+  return target;
+}
+
+function spawnImpactSparks(
+  origin: THREE.Vector3,
+  options: {
+    attacker: DuelCollision["attacker"];
+    force: number;
+    isStrike: boolean;
+    random: () => number;
+    count: number;
+  },
+): ImpactSpark[] {
+  const impact = THREE.MathUtils.clamp(options.force / 2, 0, 1);
+  const tint = new THREE.Color(
+    options.attacker === "atlas" ? "#66f0ba" : options.attacker === "blaze" ? "#ff7048" : "#ffb347",
+  );
+  const scratch = new THREE.Color();
+
+  return Array.from({ length: options.count }, () => {
+    // Prefer a horizontal spray sheet with a few high arcs — like grinding metal.
+    const angle = options.random() * Math.PI * 2;
+    const elev = THREE.MathUtils.lerp(options.isStrike ? 0.05 : -0.05, options.isStrike ? 0.82 : 0.55, options.random() ** 1.35);
+    const radial = Math.sqrt(Math.max(0, 1 - elev * elev));
+    const speed = THREE.MathUtils.lerp(
+      options.isStrike ? 0.34 : 0.18,
+      options.isStrike ? 0.78 : 0.42,
+      options.random(),
+    ) * (0.75 + impact * 0.55);
+    const direction = new THREE.Vector3(
+      Math.cos(angle) * radial,
+      Math.sin(angle) * radial,
+      elev,
+    ).normalize();
+    const heat = THREE.MathUtils.lerp(options.isStrike ? 0.72 : 0.55, 1, options.random());
+
+    return {
+      age: 0,
+      color: heatColor(heat, tint, scratch).clone(),
+      heat,
+      life: THREE.MathUtils.lerp(options.isStrike ? 0.28 : 0.18, options.isStrike ? 0.7 : 0.45, options.random()),
+      position: origin.clone().addScaledVector(direction, options.random() * 0.006),
+      size: THREE.MathUtils.lerp(0.35, options.isStrike ? 1.8 : 1.25, options.random() ** 0.7),
+      velocity: direction.multiplyScalar(speed),
+    };
+  });
+}
 
 function seededRandom(seed: number) {
   let state = seed >>> 0;
@@ -381,21 +454,61 @@ function CompetitionObjects(props: Pick<ArenaSceneProps, "cubes" | "cubeOwners" 
 }
 
 function ImpactMarker({ collision }: { collision: DuelCollision }) {
-  const geometryRef = useRef<THREE.BufferGeometry>(null);
+  const pointsGeometryRef = useRef<THREE.BufferGeometry>(null);
+  const streaksGeometryRef = useRef<THREE.BufferGeometry>(null);
+  const pointsMaterialRef = useRef<THREE.PointsMaterial>(null);
+  const flashMeshRef = useRef<THREE.Mesh>(null);
+  const flashLightRef = useRef<THREE.PointLight>(null);
   const sparksRef = useRef<ImpactSpark[]>([]);
+  const flashesRef = useRef<ImpactFlash[]>([]);
   const lastEventRef = useRef(0);
+  const grindCarryRef = useRef(0);
+  const scratchColor = useMemo(() => new THREE.Color(), []);
+  const tintAtlas = useMemo(() => new THREE.Color("#66f0ba"), []);
+  const tintBlaze = useMemo(() => new THREE.Color("#ff7048"), []);
+  const tintNeutral = useMemo(() => new THREE.Color("#ffb347"), []);
 
   useEffect(() => {
-    const geometry = geometryRef.current;
-    if (!geometry) return;
-    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MAX_IMPACT_SPARKS * 3), 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(MAX_IMPACT_SPARKS * 3), 3));
-    geometry.setDrawRange(0, 0);
+    const points = pointsGeometryRef.current;
+    const streaks = streaksGeometryRef.current;
+    if (points) {
+      points.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MAX_IMPACT_SPARKS * 3), 3));
+      points.setAttribute("color", new THREE.BufferAttribute(new Float32Array(MAX_IMPACT_SPARKS * 3), 3));
+      points.setAttribute("aSize", new THREE.BufferAttribute(new Float32Array(MAX_IMPACT_SPARKS), 1));
+      points.setDrawRange(0, 0);
+    }
+    if (streaks) {
+      streaks.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MAX_IMPACT_STREAKS * 2 * 3), 3));
+      streaks.setAttribute("color", new THREE.BufferAttribute(new Float32Array(MAX_IMPACT_STREAKS * 2 * 3), 3));
+      streaks.setDrawRange(0, 0);
+    }
+
+    const material = pointsMaterialRef.current;
+    if (material) {
+      material.onBeforeCompile = (shader) => {
+        shader.vertexShader = shader.vertexShader
+          .replace(
+            "uniform float size;",
+            "uniform float size;\nattribute float aSize;",
+          )
+          .replace(
+            "gl_PointSize = size * ( scale / - mvPosition.z );",
+            "gl_PointSize = size * aSize * ( scale / - mvPosition.z );",
+          )
+          .replace(
+            "gl_PointSize = size;",
+            "gl_PointSize = size * aSize;",
+          );
+      };
+      material.customProgramCacheKey = () => "arena-impact-sparks";
+      material.needsUpdate = true;
+    }
   }, []);
 
   useEffect(() => {
     if (collision.kind === "none" || collision.eventId === 0) {
       lastEventRef.current = 0;
+      grindCarryRef.current = 0;
       return;
     }
     if (collision.eventId === lastEventRef.current) return;
@@ -405,100 +518,223 @@ function ImpactMarker({ collision }: { collision: DuelCollision }) {
     const impact = THREE.MathUtils.clamp(collision.force / 2, 0, 1);
     const sparkCount = Math.min(
       MAX_IMPACT_SPARKS,
-      Math.round((isStrike ? 24 : 12) + impact * (isStrike ? 12 : 7)),
+      Math.round((isStrike ? 38 : 18) + impact * (isStrike ? 28 : 14)),
     );
     const random = seededRandom(collision.eventId * 31 + (isStrike ? 17 : 7));
     const origin = new THREE.Vector3(...collision.position);
-    const baseColor = new THREE.Color(
-      collision.attacker === "atlas"
-        ? "#66f0ba"
-        : collision.attacker === "blaze"
-          ? "#ff7048"
-          : "#f1c75b",
-    );
-    const hotColor = new THREE.Color("#fff4c2");
-    const newSparks = Array.from({ length: sparkCount }, () => {
-      const angle = random() * Math.PI * 2;
-      const vertical = THREE.MathUtils.lerp(-0.2, 0.78, random());
-      const radial = Math.sqrt(1 - vertical * vertical);
-      const speed = THREE.MathUtils.lerp(
-        isStrike ? 0.28 : 0.16,
-        isStrike ? 0.52 : 0.32,
-        random(),
-      ) * (0.85 + impact * 0.3);
-      const direction = new THREE.Vector3(
-        Math.cos(angle) * radial,
-        Math.sin(angle) * radial,
-        vertical,
-      );
-
-      return {
-        age: 0,
-        color: baseColor.clone().lerp(hotColor, 0.35 + random() * 0.55),
-        life: THREE.MathUtils.lerp(isStrike ? 0.42 : 0.28, isStrike ? 0.72 : 0.5, random()),
-        position: origin.clone().addScaledVector(direction, random() * 0.008),
-        velocity: direction.multiplyScalar(speed),
-      };
+    const burst = spawnImpactSparks(origin, {
+      attacker: collision.attacker,
+      force: collision.force,
+      isStrike,
+      random,
+      count: sparkCount,
     });
-    const keepCount = Math.max(0, MAX_IMPACT_SPARKS - newSparks.length);
-    const retainedSparks = keepCount > 0 ? sparksRef.current.slice(-keepCount) : [];
-    sparksRef.current = [...retainedSparks, ...newSparks];
-  }, [collision]);
+    const keepCount = Math.max(0, MAX_IMPACT_SPARKS - burst.length);
+    sparksRef.current = [...(keepCount > 0 ? sparksRef.current.slice(-keepCount) : []), ...burst];
+
+    const tint = collision.attacker === "atlas"
+      ? tintAtlas
+      : collision.attacker === "blaze"
+        ? tintBlaze
+        : tintNeutral;
+    flashesRef.current.push({
+      age: 0,
+      color: new THREE.Color("#fff6d8").lerp(tint, 0.25),
+      intensity: isStrike ? 2.8 + impact * 1.6 : 1.4 + impact,
+      life: isStrike ? 0.11 : 0.08,
+      position: origin.clone(),
+      radius: isStrike ? 0.018 + impact * 0.01 : 0.012 + impact * 0.006,
+    });
+    if (flashesRef.current.length > 4) flashesRef.current.splice(0, flashesRef.current.length - 4);
+  }, [collision, tintAtlas, tintBlaze, tintNeutral]);
 
   useFrame((_, delta) => {
-    const geometry = geometryRef.current;
-    if (!geometry) return;
-    const positions = geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
-    const colors = geometry.getAttribute("color") as THREE.BufferAttribute | undefined;
-    if (!positions || !colors) return;
+    const pointsGeometry = pointsGeometryRef.current;
+    const streaksGeometry = streaksGeometryRef.current;
+    if (!pointsGeometry || !streaksGeometry) return;
+    const positions = pointsGeometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+    const colors = pointsGeometry.getAttribute("color") as THREE.BufferAttribute | undefined;
+    const sizes = pointsGeometry.getAttribute("aSize") as THREE.BufferAttribute | undefined;
+    const streakPositions = streaksGeometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+    const streakColors = streaksGeometry.getAttribute("color") as THREE.BufferAttribute | undefined;
+    if (!positions || !colors || !sizes || !streakPositions || !streakColors) return;
 
     const frameDelta = Math.min(delta, 1 / 30);
+
+    // While arms stay pressed, drip a few grinding embers — no solid “contact orb”.
+    if (collision.kind !== "none" && collision.eventId > 0) {
+      const grindRate = (collision.kind === "strike" ? 28 : 14) + Math.min(collision.force, 3) * 10;
+      grindCarryRef.current += frameDelta * grindRate;
+      const origin = new THREE.Vector3(...collision.position);
+      while (grindCarryRef.current >= 1 && sparksRef.current.length < MAX_IMPACT_SPARKS) {
+        grindCarryRef.current -= 1;
+        const ember = spawnImpactSparks(origin, {
+          attacker: collision.attacker,
+          force: Math.max(0.35, collision.force * 0.45),
+          isStrike: false,
+          random: Math.random,
+          count: 1,
+        })[0];
+        ember.life *= 0.55;
+        ember.size *= 0.55;
+        ember.velocity.multiplyScalar(0.45);
+        sparksRef.current.push(ember);
+      }
+    } else {
+      grindCarryRef.current = 0;
+    }
+
     const activeSparks: ImpactSpark[] = [];
     sparksRef.current.forEach((spark) => {
       spark.age += frameDelta;
       if (spark.age >= spark.life) return;
-      spark.velocity.z -= 0.62 * frameDelta;
-      spark.velocity.multiplyScalar(Math.exp(-1.8 * frameDelta));
+
+      spark.velocity.z -= 1.65 * frameDelta;
+      spark.velocity.x *= Math.exp(-0.55 * frameDelta);
+      spark.velocity.y *= Math.exp(-0.55 * frameDelta);
+      spark.velocity.z *= Math.exp(-0.2 * frameDelta);
       spark.position.addScaledVector(spark.velocity, frameDelta);
+
+      if (spark.position.z < FLOOR_Z) {
+        spark.position.z = FLOOR_Z;
+        if (Math.abs(spark.velocity.z) > 0.08) {
+          spark.velocity.z *= -0.22;
+          spark.velocity.x *= 0.55;
+          spark.velocity.y *= 0.55;
+          spark.heat *= 0.65;
+          spark.life = Math.min(spark.life, spark.age + 0.12);
+        } else {
+          spark.velocity.set(0, 0, 0);
+          spark.life = Math.min(spark.life, spark.age + 0.08);
+        }
+      }
+
+      const lifeRatio = 1 - spark.age / spark.life;
+      spark.heat = Math.max(0, spark.heat - frameDelta * (0.55 + (1 - lifeRatio) * 1.2));
+      const tint = collision.attacker === "atlas"
+        ? tintAtlas
+        : collision.attacker === "blaze"
+          ? tintBlaze
+          : tintNeutral;
+      heatColor(spark.heat * lifeRatio, tint, spark.color);
       activeSparks.push(spark);
     });
     sparksRef.current = activeSparks;
 
     activeSparks.forEach((spark, index) => {
-      const fade = Math.pow(1 - spark.age / spark.life, 1.4);
+      const lifeRatio = Math.max(0, 1 - spark.age / spark.life);
+      const fade = Math.pow(lifeRatio, 1.15);
       positions.setXYZ(index, spark.position.x, spark.position.y, spark.position.z);
       colors.setXYZ(index, spark.color.r * fade, spark.color.g * fade, spark.color.b * fade);
+      sizes.setX(index, spark.size * (0.55 + fade * 0.7));
+
+      const streakIndex = index * 2;
+      const trail = Math.min(0.028, spark.velocity.length() * 0.045);
+      streakPositions.setXYZ(streakIndex, spark.position.x, spark.position.y, spark.position.z);
+      streakPositions.setXYZ(
+        streakIndex + 1,
+        spark.position.x - spark.velocity.x * trail,
+        spark.position.y - spark.velocity.y * trail,
+        spark.position.z - spark.velocity.z * trail,
+      );
+      streakColors.setXYZ(streakIndex, spark.color.r * fade, spark.color.g * fade, spark.color.b * fade);
+      streakColors.setXYZ(
+        streakIndex + 1,
+        spark.color.r * fade * 0.15,
+        spark.color.g * fade * 0.15,
+        spark.color.b * fade * 0.1,
+      );
     });
-    geometry.setDrawRange(0, activeSparks.length);
+
+    pointsGeometry.setDrawRange(0, activeSparks.length);
+    streaksGeometry.setDrawRange(0, activeSparks.length * 2);
     positions.needsUpdate = true;
     colors.needsUpdate = true;
+    sizes.needsUpdate = true;
+    streakPositions.needsUpdate = true;
+    streakColors.needsUpdate = true;
+
+    const flashes = flashesRef.current;
+    for (let index = flashes.length - 1; index >= 0; index -= 1) {
+      flashes[index].age += frameDelta;
+      if (flashes[index].age >= flashes[index].life) flashes.splice(index, 1);
+    }
+    const flash = flashes[flashes.length - 1];
+    if (flashMeshRef.current && flashLightRef.current) {
+      if (flash) {
+        const t = flash.age / flash.life;
+        const envelope = Math.sin(Math.min(1, t) * Math.PI);
+        flashMeshRef.current.visible = true;
+        flashMeshRef.current.position.copy(flash.position);
+        flashMeshRef.current.scale.setScalar(flash.radius * (0.7 + envelope * 1.8));
+        const material = flashMeshRef.current.material as THREE.MeshBasicMaterial;
+        material.color.copy(flash.color);
+        material.opacity = envelope * 0.85;
+        flashLightRef.current.visible = true;
+        flashLightRef.current.position.copy(flash.position);
+        flashLightRef.current.color.copy(flash.color);
+        flashLightRef.current.intensity = flash.intensity * envelope;
+      } else if (collision.kind !== "none") {
+        // Soft living contact light only — no solid bridge sphere.
+        flashMeshRef.current.visible = false;
+        flashLightRef.current.visible = true;
+        flashLightRef.current.position.set(...collision.position);
+        const flicker = 0.55 + Math.sin(performance.now() * 0.04) * 0.2 + Math.random() * 0.12;
+        scratchColor.copy(
+          collision.attacker === "atlas"
+            ? tintAtlas
+            : collision.attacker === "blaze"
+              ? tintBlaze
+              : tintNeutral,
+        );
+        flashLightRef.current.color.copy(scratchColor);
+        flashLightRef.current.intensity = (collision.kind === "strike" ? 0.55 : 0.28) * flicker;
+      } else {
+        flashMeshRef.current.visible = false;
+        flashLightRef.current.visible = false;
+        flashLightRef.current.intensity = 0;
+      }
+    }
   });
 
-  const color = collision.attacker === "atlas" ? "#57b28c" : collision.attacker === "blaze" ? "#ff7048" : "#f1c75b";
   return (
     <>
       <points frustumCulled={false}>
-        <bufferGeometry ref={geometryRef} />
+        <bufferGeometry ref={pointsGeometryRef} />
         <pointsMaterial
+          ref={pointsMaterialRef}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
-          opacity={0.95}
-          size={0.012}
+          opacity={1}
+          size={0.016}
           sizeAttenuation
           toneMapped={false}
           transparent
           vertexColors
         />
       </points>
-      {collision.kind !== "none" && (
-        <group position={collision.position}>
-          <pointLight color={color} intensity={collision.kind === "strike" ? 2.1 : 1.4} distance={0.25} decay={2} />
-          <mesh>
-            <sphereGeometry args={[collision.kind === "strike" ? 0.014 : 0.01, 16, 12]} />
-            <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.5} />
-          </mesh>
-        </group>
-      )}
+      <lineSegments frustumCulled={false}>
+        <bufferGeometry ref={streaksGeometryRef} />
+        <lineBasicMaterial
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          transparent
+          toneMapped={false}
+          vertexColors
+        />
+      </lineSegments>
+      <mesh ref={flashMeshRef} visible={false} frustumCulled={false}>
+        <sphereGeometry args={[1, 16, 12]} />
+        <meshBasicMaterial
+          blending={THREE.AdditiveBlending}
+          color="#fff6d8"
+          depthWrite={false}
+          opacity={0}
+          transparent
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight ref={flashLightRef} visible={false} distance={0.32} decay={2} intensity={0} />
     </>
   );
 }

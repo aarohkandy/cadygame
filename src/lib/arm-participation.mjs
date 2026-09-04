@@ -20,7 +20,7 @@ const ATLAS_BASE = [-0.32, 0];
 const MANUAL_X_RANGE = [-0.075, 0.035];
 const MANUAL_Y_RANGE = [-0.14, 0.14];
 const MANUAL_REACH_RANGE = [0.245, 0.355];
-const JOYSTICK_SPEED = 0.115;
+const JOYSTICK_SPEED = 0.28;
 
 /**
  * @param {unknown} action
@@ -121,7 +121,7 @@ export function stepTaskSpaceTarget(target, joystick, deltaSeconds, lifted) {
   }
 
   const desiredHeight = lifted ? MANUAL_HEIGHTS.lifted : MANUAL_HEIGHTS.lowered;
-  const heightStep = 0.12 * deltaSeconds;
+  const heightStep = 0.28 * deltaSeconds;
   next[2] += Math.min(heightStep, Math.max(-heightStep, desiredHeight - next[2]));
   return next;
 }

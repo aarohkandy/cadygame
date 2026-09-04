@@ -277,12 +277,15 @@ export class MujocoEngine {
     };
   }
 
-  solveAtlasIK(target: [number, number, number], seed: number[], gripper: number) {
+  solveAtlasIK(target: [number, number, number], seed: number[], gripper: number, wristRoll?: number) {
     const jointLimits = JOINT_CONTROLS.slice(0, 4).map(({ min, max }) => ({ min, max }));
     const gripperTarget = Math.min(
       JOINT_CONTROLS[5].max,
       Math.max(JOINT_CONTROLS[5].min, gripper),
     );
+    const rollJoint = JOINT_CONTROLS[4];
+    const rollSeed = wristRoll ?? seed[4] ?? 0;
+    const rollTarget = Math.min(rollJoint.max, Math.max(rollJoint.min, rollSeed));
     const solution = solvePositionIK({
       seed: Array.from({ length: 4 }, (_, index) => seed[index] ?? START_POSE[index]),
       target,
@@ -291,13 +294,13 @@ export class MujocoEngine {
         joints.forEach((value, index) => {
           this.ikData.qpos[index] = value;
         });
-        this.ikData.qpos[4] = 0;
+        this.ikData.qpos[4] = rollTarget;
         this.ikData.qpos[5] = gripperTarget;
         this.module.mj_kinematics(this.model, this.ikData);
         return this.readAtlasEndEffector(this.ikData);
       },
     });
-    return [...solution.joints, 0, gripperTarget];
+    return [...solution.joints, rollTarget, gripperTarget];
   }
 
   private writeControls(targets: number[], offset: number) {

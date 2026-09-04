@@ -22,7 +22,7 @@ test("joystick motion is normalized, workspace-limited, and height-assisted", ()
   assert.ok(Math.abs(Math.hypot(
     diagonal[0] - MANUAL_HOME_TARGET[0],
     diagonal[1] - MANUAL_HOME_TARGET[1],
-  ) - 0.0115) < 1e-8, "diagonal joystick input should not exceed axial speed");
+  ) - 0.028) < 1e-8, "diagonal joystick input should not exceed axial speed");
 
   let lowered = [...MANUAL_HOME_TARGET];
   for (let frame = 0; frame < 120; frame += 1) {

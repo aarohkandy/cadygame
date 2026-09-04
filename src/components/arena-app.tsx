@@ -20,6 +20,17 @@ import {
   STANDARD_GAMEPAD,
   readStandardGamepad,
 } from "@/lib/gamepad-controls.mjs";
+import { ArenaAudio } from "@/lib/arena-audio.mjs";
+import {
+  gripperLooksClosed,
+  handKeyboardAxes,
+  keyCodesForMode,
+  legendForMode,
+  stepGripper,
+  stepHandHeight,
+  stepJointTargets,
+  stepWristRoll,
+} from "@/lib/manual-controls.mjs";
 import { CUBE_COUNT, MujocoEngine, START_POSE, type PhysicsSnapshot } from "@/lib/mujoco-engine";
 
 const TASKS = [
@@ -93,6 +104,7 @@ const FALLBACK_SNAPSHOT: PhysicsSnapshot = {
 
 type EngineStatus = "loading" | "ready" | "fallback";
 type ControlMode = "manual" | "policy";
+type ManualDriveMode = "hand" | "joint";
 type PolicyChoice = (typeof POLICY_OPTIONS)[number]["id"] | "uploaded";
 type UploadState = { kind: "idle" | "loading" | "ready" | "error"; message: string };
 type GamepadConnection = { index: number; name: string };
@@ -146,9 +158,13 @@ function policyTargets(policy: number, task: string, elapsed: number) {
   return [0.28 * reach, -0.64 + lift * 0.43, 1.14 - lift * 0.31, -0.62 + lift * 0.28, 0.08, 1.18 - reach * 1.03];
 }
 
+// Blaze reuses the built-in choreography; scaling time makes it finish
+// reaches/sweeps sooner without raising MuJoCo actuator torque limits.
+const BLAZE_MOTION_TIME_SCALE = 1.4;
+
 function opponentPolicyTargets(task: string, elapsed: number) {
-  const baseline = policyTargets(1, task, elapsed + 0.28) ?? START_POSE;
-  return baseline.map((value, index) => value + (index === 0 ? Math.sin(elapsed * 0.8) * 0.06 : 0));
+  const baseline = policyTargets(1, task, elapsed * BLAZE_MOTION_TIME_SCALE + 0.28) ?? START_POSE;
+  return baseline.map((value, index) => value + (index === 0 ? Math.sin(elapsed * 1.1) * 0.06 : 0));
 }
 
 export function ArenaApp() {
@@ -158,6 +174,7 @@ export function ArenaApp() {
   const [manualLifted, setManualLifted] = useState(true);
   const [manualGripping, setManualGripping] = useState(false);
   const [manualPrecision, setManualPrecision] = useState(false);
+  const [manualDriveMode, setManualDriveMode] = useState<ManualDriveMode>("hand");
   const [joystickVisual, setJoystickVisual] = useState({ x: 0, y: 0 });
   const [gamepadConnection, setGamepadConnection] = useState<GamepadConnection | null>(null);
   const [controllerMapOpen, setControllerMapOpen] = useState(false);
@@ -191,10 +208,13 @@ export function ArenaApp() {
   const manualLiftedRef = useRef(true);
   const manualGrippingRef = useRef(false);
   const manualPrecisionRef = useRef(false);
+  const manualDriveModeRef = useRef<ManualDriveMode>("hand");
+  const shiftHeldRef = useRef(false);
   const uploadedPolicyRef = useRef<InstanceType<typeof UploadedPolicyRunner> | null>(null);
   const uploadRequestRef = useRef(0);
   const elapsedRef = useRef(0);
   const lastCollisionEventRef = useRef(0);
+  const audioRef = useRef<ArenaAudio | null>(null);
   const selectedTask = useMemo(() => TASKS.find((task) => task.id === selectedTaskId) ?? TASKS[0], [selectedTaskId]);
   const isHeist = selectedTaskId === "heist";
   const matchLength = isHeist ? HEIST_MATCH_LENGTH : episodeLength;
@@ -206,6 +226,15 @@ export function ArenaApp() {
 
   const resetEpisode = useCallback((taskId = selectedTaskId) => {
     setRunning(false);
+    audioRef.current?.sync({
+      deltaSeconds: 0.016,
+      joints: [...START_POSE],
+      opponentJoints: [...START_POSE],
+      armContacts: 0,
+      cubeContacts: 0,
+      collision: FALLBACK_SNAPSHOT.collision,
+      running: false,
+    });
     elapsedRef.current = 0;
     setElapsed(0);
     setReward(0);
@@ -233,6 +262,15 @@ export function ArenaApp() {
     snapshotRef.current = next;
     setSnapshot(next);
   }, [randomization, selectedTaskId, updateTargets]);
+
+  useEffect(() => {
+    const audio = new ArenaAudio();
+    audioRef.current = audio;
+    return () => {
+      audio.dispose();
+      audioRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -270,24 +308,83 @@ export function ArenaApp() {
 
       let activeTargets = targetsRef.current;
       if (controlMode === "manual") {
-        const keyboardX = Number(manualKeysRef.current.has("right")) - Number(manualKeysRef.current.has("left"));
-        const keyboardY = Number(manualKeysRef.current.has("back")) - Number(manualKeysRef.current.has("forward"));
-        manualTargetRef.current = stepTaskSpaceTarget(
-          manualTargetRef.current,
-          {
-            x: joystickRef.current.x + gamepadMoveRef.current.x + keyboardX,
-            y: joystickRef.current.y + gamepadMoveRef.current.y + keyboardY,
-          },
-          0.016,
-          manualLiftedRef.current,
-        ) as [number, number, number];
-        activeTargets = engineRef.current?.solveAtlasIK(
-          manualTargetRef.current,
-          activeTargets,
-          manualGrippingRef.current
+        const precisionScale = (manualPrecisionRef.current || shiftHeldRef.current)
+          ? PRECISION_SPEED_SCALE
+          : 1;
+        if (manualDriveModeRef.current === "joint") {
+          activeTargets = stepJointTargets(activeTargets, manualKeysRef.current, 0.016, precisionScale);
+          const gripping = gripperLooksClosed(activeTargets[5] ?? MANUAL_GRIPPER_TARGETS.open);
+          if (gripping !== manualGrippingRef.current) {
+            manualGrippingRef.current = gripping;
+            setManualGripping(gripping);
+          }
+        } else {
+          const keyboard = handKeyboardAxes(manualKeysRef.current, precisionScale);
+          const stickScale = precisionScale;
+          manualTargetRef.current = stepTaskSpaceTarget(
+            manualTargetRef.current,
+            {
+              x: joystickRef.current.x * stickScale + gamepadMoveRef.current.x + keyboard.x,
+              y: joystickRef.current.y * stickScale + gamepadMoveRef.current.y + keyboard.y,
+            },
+            0.016,
+            manualLiftedRef.current,
+          ) as [number, number, number];
+
+          const holdRaise = manualKeysRef.current.has("raise");
+          const holdLower = manualKeysRef.current.has("lower");
+          if (holdRaise || holdLower) {
+            manualTargetRef.current[2] = stepHandHeight(
+              manualTargetRef.current[2],
+              holdRaise,
+              holdLower,
+              0.016,
+              precisionScale,
+            );
+            const lifted = manualTargetRef.current[2] > 0.12;
+            if (lifted !== manualLiftedRef.current) {
+              manualLiftedRef.current = lifted;
+              setManualLifted(lifted);
+            }
+          }
+
+          const holdClose = manualKeysRef.current.has("gripClose");
+          const holdOpen = manualKeysRef.current.has("gripOpen");
+          let gripper = manualGrippingRef.current
             ? MANUAL_GRIPPER_TARGETS.closed
-            : MANUAL_GRIPPER_TARGETS.open,
-        ) ?? activeTargets;
+            : MANUAL_GRIPPER_TARGETS.open;
+          if (holdClose || holdOpen) {
+            gripper = stepGripper(
+              activeTargets[5] ?? gripper,
+              holdClose,
+              holdOpen,
+              0.016,
+              precisionScale,
+            );
+            const gripping = gripperLooksClosed(gripper);
+            if (gripping !== manualGrippingRef.current) {
+              manualGrippingRef.current = gripping;
+              setManualGripping(gripping);
+            }
+          }
+
+          const holdCcw = manualKeysRef.current.has("rollCcw");
+          const holdCw = manualKeysRef.current.has("rollCw");
+          const wristRoll = stepWristRoll(
+            activeTargets[4] ?? 0,
+            holdCcw,
+            holdCw,
+            0.016,
+            precisionScale,
+          );
+
+          activeTargets = engineRef.current?.solveAtlasIK(
+            manualTargetRef.current,
+            activeTargets,
+            gripper,
+            wristRoll,
+          ) ?? activeTargets;
+        }
       } else if (policyChoice === "uploaded" && uploadedPolicyRef.current) {
         const current = snapshotRef.current;
         activeTargets = uploadedPolicyRef.current.nextTargets({
@@ -319,6 +416,15 @@ export function ArenaApp() {
       snapshotRef.current = nextSnapshot;
       setSnapshot(nextSnapshot);
 
+      if (controlMode === "manual" && manualDriveModeRef.current === "joint") {
+        manualTargetRef.current = [...nextSnapshot.atlasEndEffector];
+        const lifted = nextSnapshot.atlasEndEffector[2] > 0.12;
+        if (lifted !== manualLiftedRef.current) {
+          manualLiftedRef.current = lifted;
+          setManualLifted(lifted);
+        }
+      }
+
       if (nextSnapshot.collision.eventId > 0 && nextSnapshot.collision.eventId !== lastCollisionEventRef.current) {
         lastCollisionEventRef.current = nextSnapshot.collision.eventId;
         setCombatStats((stats) => {
@@ -328,6 +434,17 @@ export function ArenaApp() {
           return { ...stats, blocks: stats.blocks + 1 };
         });
       }
+
+      const matchStillRunning = nextElapsed < matchLength;
+      audioRef.current?.sync({
+        deltaSeconds: 0.016,
+        joints: nextSnapshot.joints,
+        opponentJoints: nextSnapshot.opponentJoints,
+        armContacts: nextSnapshot.armContacts,
+        cubeContacts: nextSnapshot.cubeContacts,
+        collision: nextSnapshot.collision,
+        running: matchStillRunning,
+      });
 
       const taskFactor = selectedTaskId === "heist" ? 1 : selectedTaskId === "push" ? 0.93 : 0.86;
       const opponentFactor = selectedTaskId === "heist" ? 0.98 : selectedTaskId === "push" ? 0.95 : 0.94;
@@ -360,7 +477,22 @@ export function ArenaApp() {
   const toggleRun = useCallback(() => {
     if (elapsedRef.current >= matchLength) resetEpisode();
     setControllerMapOpen(false);
-    setRunning((value) => !value);
+    setRunning((value) => {
+      const next = !value;
+      if (next) void audioRef.current?.resume();
+      else {
+        audioRef.current?.sync({
+          deltaSeconds: 0.016,
+          joints: snapshotRef.current.joints,
+          opponentJoints: snapshotRef.current.opponentJoints,
+          armContacts: 0,
+          cubeContacts: snapshotRef.current.cubeContacts,
+          collision: snapshotRef.current.collision,
+          running: false,
+        });
+      }
+      return next;
+    });
   }, [matchLength, resetEpisode]);
 
   const selectControlMode = useCallback((mode: ControlMode) => {
@@ -372,11 +504,13 @@ export function ArenaApp() {
       const current = snapshotRef.current;
       manualTargetRef.current = [...current.atlasEndEffector];
       const lifted = current.atlasEndEffector[2] > 0.12;
-      const gripping = (current.joints[5] ?? MANUAL_GRIPPER_TARGETS.open) < 0.5;
+      const gripping = gripperLooksClosed(current.joints[5] ?? MANUAL_GRIPPER_TARGETS.open);
       manualLiftedRef.current = lifted;
       manualGrippingRef.current = gripping;
+      manualDriveModeRef.current = "hand";
       setManualLifted(lifted);
       setManualGripping(gripping);
+      setManualDriveMode("hand");
     }
     updateTargets([...snapshotRef.current.joints]);
     setControlMode(mode);
@@ -399,6 +533,22 @@ export function ArenaApp() {
     manualPrecisionRef.current = next;
     setManualPrecision(next);
   }, []);
+
+  const toggleManualDriveMode = useCallback(() => {
+    manualKeysRef.current.clear();
+    const next: ManualDriveMode = manualDriveModeRef.current === "hand" ? "joint" : "hand";
+    manualDriveModeRef.current = next;
+    setManualDriveMode(next);
+    const current = snapshotRef.current;
+    manualTargetRef.current = [...current.atlasEndEffector];
+    const lifted = current.atlasEndEffector[2] > 0.12;
+    const gripping = gripperLooksClosed(current.joints[5] ?? MANUAL_GRIPPER_TARGETS.open);
+    manualLiftedRef.current = lifted;
+    manualGrippingRef.current = gripping;
+    setManualLifted(lifted);
+    setManualGripping(gripping);
+    updateTargets([...current.joints]);
+  }, [updateTargets]);
 
   const toggleControllerMap = useCallback(() => {
     if (!controllerMapOpen) setRunning(false);
@@ -569,12 +719,6 @@ export function ArenaApp() {
   ]);
 
   useEffect(() => {
-    const movementKeys: Record<string, string> = {
-      ArrowLeft: "left", KeyA: "left",
-      ArrowRight: "right", KeyD: "right",
-      ArrowUp: "forward", KeyW: "forward",
-      ArrowDown: "back", KeyS: "back",
-    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code === "Escape" && controllerMapOpen) {
         event.preventDefault();
@@ -592,31 +736,46 @@ export function ArenaApp() {
         toggleRun();
         return;
       }
-      if (event.key.toLowerCase() === "x") {
+      if (event.key.toLowerCase() === "x" && event.code === "KeyX") {
         resetEpisode();
         return;
       }
-      if (controlMode !== "manual" || !running) return;
-      const movement = movementKeys[event.code];
+      if (event.key === "Shift") {
+        shiftHeldRef.current = true;
+        return;
+      }
+      if (controlMode !== "manual") return;
+      if (event.code === "Tab") {
+        event.preventDefault();
+        if (!event.repeat) toggleManualDriveMode();
+        return;
+      }
+      if (!running) return;
+      const movement = keyCodesForMode(manualDriveModeRef.current)[event.code];
       if (movement) {
         event.preventDefault();
         manualKeysRef.current.add(movement);
         return;
       }
       if (event.repeat) return;
-      if (event.code === "KeyL") toggleManualLift();
-      else if (event.code === "KeyG") toggleManualGrip();
+      if (event.code === "KeyL" && manualDriveModeRef.current === "hand") toggleManualLift();
       else if (event.code === "KeyP") toggleManualPrecision();
-      else if (event.code === "KeyR") homeManualArm();
+      else if (event.code === "KeyB") homeManualArm();
       else return;
       event.preventDefault();
     };
     const onKeyUp = (event: KeyboardEvent) => {
-      const movement = movementKeys[event.code];
-      if (movement) manualKeysRef.current.delete(movement);
+      if (event.key === "Shift") {
+        shiftHeldRef.current = false;
+      }
+      const handAction = keyCodesForMode("hand")[event.code];
+      const jointAction = keyCodesForMode("joint")[event.code];
+      if (handAction) manualKeysRef.current.delete(handAction);
+      if (jointAction) manualKeysRef.current.delete(jointAction);
     };
     const clearControls = () => {
       manualKeysRef.current.clear();
+      shiftHeldRef.current = false;
       releaseJoystick();
     };
     window.addEventListener("keydown", onKeyDown);
@@ -627,7 +786,7 @@ export function ArenaApp() {
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", clearControls);
     };
-  }, [closeControllerMap, controlMode, controllerMapOpen, homeManualArm, releaseJoystick, resetEpisode, running, toggleManualGrip, toggleManualLift, toggleManualPrecision, toggleRun]);
+  }, [closeControllerMap, controlMode, controllerMapOpen, homeManualArm, releaseJoystick, resetEpisode, running, toggleManualDriveMode, toggleManualLift, toggleManualPrecision, toggleRun]);
 
   useEffect(() => {
     if (!running || controlMode !== "manual") {
@@ -744,7 +903,26 @@ export function ArenaApp() {
           </div>
           {controlMode === "manual" ? (
             <section className="manual-console" aria-label="Manual SO-101 controls">
-              <div className="console-heading"><span><b>{gamepadConnection ? "CONTROLLER DRIVE" : "JOYSTICK DRIVE"}</b><small>{gamepadConnection ? "Left stick · four actions" : "Drag, keys, or connect a gamepad"}</small></span><i className={running ? "armed" : ""}>{running ? "LIVE" : "START MATCH"}</i></div>
+              <div className="console-heading"><span><b>{gamepadConnection ? "CONTROLLER DRIVE" : "KEYBOARD + STICK"}</b><small>{gamepadConnection ? "Left stick · four actions" : "Hand or Joint keyboard maps"}</small></span><i className={running ? "armed" : ""}>{running ? "LIVE" : "START MATCH"}</i></div>
+              <div className="drive-mode-bar" role="group" aria-label="Manual drive mode">
+                <button
+                  type="button"
+                  className={manualDriveMode === "hand" ? "active" : ""}
+                  onClick={() => {
+                    if (manualDriveModeRef.current !== "hand") toggleManualDriveMode();
+                  }}
+                  aria-pressed={manualDriveMode === "hand"}
+                >HAND</button>
+                <button
+                  type="button"
+                  className={manualDriveMode === "joint" ? "active" : ""}
+                  onClick={() => {
+                    if (manualDriveModeRef.current !== "joint") toggleManualDriveMode();
+                  }}
+                  aria-pressed={manualDriveMode === "joint"}
+                >JOINT</button>
+                <span><kbd>Tab</kbd> switch · {manualDriveMode === "hand" ? "move the gripper" : "pose each joint"}</span>
+              </div>
               <div className={`gamepad-banner ${gamepadConnection ? "connected" : ""}`}>
                 <div><i /><span><strong>{gamepadConnection?.name ?? "XBOX / STANDARD GAMEPAD"}</strong><small>{gamepadConnection ? "PLAYER 1 · READY" : "PRESS ANY CONTROLLER BUTTON"}</small></span></div>
                 <button type="button" onClick={toggleControllerMap}>MAP <kbd>▣</kbd></button>
@@ -785,13 +963,18 @@ export function ArenaApp() {
                 ><span>{gamepadConnection ? "LS" : "MOVE"}</span></div>
               </div>
               <div className="manual-actions" aria-label="Manual arm actions">
-                <button className={!manualLifted ? "active" : ""} disabled={!running} onClick={toggleManualLift} aria-pressed={!manualLifted}><span className="xbox-key y">Y</span><strong>{manualLifted ? "LOWER" : "LIFT"}</strong><small>{manualLifted ? "TO CUBE" : "TO TRAVEL"} · L</small></button>
-                <button className={manualGripping ? "active grip" : ""} disabled={!running} onClick={toggleManualGrip} aria-pressed={manualGripping}><span className="xbox-key a">A</span><strong>{manualGripping ? "DROP" : "GRAB"}</strong><small>{manualGripping ? "OPEN" : "CLOSE"} · G</small></button>
-                <button className={manualPrecision ? "active precision" : ""} disabled={!running} onClick={toggleManualPrecision} aria-pressed={manualPrecision}><span className="xbox-key x">X</span><strong>PRECISION</strong><small>{manualPrecision ? "35% SPEED" : "FULL SPEED"} · P</small></button>
-                <button disabled={!running} onClick={homeManualArm}><span className="xbox-key b">B</span><strong>HOME</strong><small>SAFE POSE · R</small></button>
+                <button className={!manualLifted ? "active" : ""} disabled={!running || manualDriveMode === "joint"} onClick={toggleManualLift} aria-pressed={!manualLifted}><span className="xbox-key y">Y</span><strong>{manualLifted ? "LOWER" : "LIFT"}</strong><small>{manualLifted ? "TO CUBE" : "TO TRAVEL"} · L · R/F</small></button>
+                <button className={manualGripping ? "active grip" : ""} disabled={!running} onClick={toggleManualGrip} aria-pressed={manualGripping}><span className="xbox-key a">A</span><strong>{manualGripping ? "DROP" : "GRAB"}</strong><small>{manualGripping ? "OPEN" : "CLOSE"} · G/H</small></button>
+                <button className={manualPrecision ? "active precision" : ""} disabled={!running} onClick={toggleManualPrecision} aria-pressed={manualPrecision}><span className="xbox-key x">X</span><strong>PRECISION</strong><small>{manualPrecision ? "35% SPEED" : "FULL SPEED"} · P · Shift</small></button>
+                <button disabled={!running} onClick={homeManualArm}><span className="xbox-key b">B</span><strong>HOME</strong><small>SAFE POSE · B</small></button>
               </div>
               <div className="manual-state" aria-live="polite"><span><i className={manualLifted ? "lifted" : ""} />{manualLifted ? "TRAVEL" : "CUBE HEIGHT"}</span><span><i className={manualGripping ? "gripping" : ""} />{manualGripping ? "GRIP CLOSED" : "GRIP OPEN"}</span><span><i className={manualPrecision ? "precision" : ""} />{manualPrecision ? "PRECISION" : "FULL SPEED"}</span></div>
-              <p className="control-note">{gamepadConnection ? "LS moves · RS orbits · D-pad changes camera." : "Drag the stick or use WASD / arrow keys."} MuJoCo coordinates the joints.</p>
+              <ul className="keyboard-legend" aria-label={`${manualDriveMode} keyboard map`}>
+                {legendForMode(manualDriveMode).map((row) => (
+                  <li key={`${manualDriveMode}-${row.keys}`}><kbd>{row.keys}</kbd><span>{row.action}</span></li>
+                ))}
+              </ul>
+              <p className="control-note">{gamepadConnection ? "LS moves · RS orbits · D-pad changes camera." : manualDriveMode === "hand" ? "Hand mode: drag the stick or use the keys below." : "Joint mode: hold keys to drive each DOF directly."} MuJoCo coordinates the joints.</p>
             </section>
           ) : (
             <section className="policy-console" aria-label="Policy controls">
@@ -828,7 +1011,7 @@ export function ArenaApp() {
           <div className="episode-progress"><span><b>{running ? matchCall : elapsed >= matchLength ? resultLabel : "READY TO RACE"}</b><i>{elapsed.toFixed(1)} / {matchLength}s</i></span><div><i style={{ width: `${progress}%` }} /></div></div>
           <div className="run-actions"><button className={`run-button ${running ? "pause" : ""}`} onClick={toggleRun}><span>{running ? "Ⅱ" : "▶"}</span> {running ? "PAUSE MATCH" : elapsed >= matchLength ? "RACE AGAIN" : elapsed > 0 ? "RESUME MATCH" : "START MATCH"}<small>{gamepadConnection ? "☰ / SPACE" : "SPACE"}</small></button><button className="reset-button" onClick={() => resetEpisode()} aria-label="Reset match">↺</button></div>
           <div className="metric-strip competitor-metrics"><div><span>ATLAS {isHeist ? "CUBES" : "SCORE"} · {combatStats.atlas} HITS</span><strong>{atlasScore}</strong></div><div><span>BLAZE {isHeist ? "CUBES" : "SCORE"} · {combatStats.blaze} HITS</span><strong>{blazeScore}</strong></div></div>
-          <p className="hint">{controlMode === "manual" ? (gamepadConnection ? "Xbox-style controller ready" : "Drag the joystick while the match is live") : "Your selected policy controls Atlas"} · <kbd>X KEY</kbd> reset</p>
+          <p className="hint">{controlMode === "manual" ? (gamepadConnection ? "Xbox-style controller ready" : `${manualDriveMode === "hand" ? "Hand" : "Joint"} keyboard live · Tab switches`) : "Your selected policy controls Atlas"} · <kbd>X KEY</kbd> reset</p>
         </aside>
       </section>
     </main>
