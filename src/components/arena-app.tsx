@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArenaScene, type CameraPreset, type CubeOwner } from "@/components/arena-scene";
+import {
+  ArenaScene,
+  type CameraControlState,
+  type CameraPreset,
+  type CubeOwner,
+} from "@/components/arena-scene";
+import { ControllerMap } from "@/components/controller-map";
 import {
   MANUAL_GRIPPER_TARGETS,
   MANUAL_HOME_TARGET,
@@ -9,6 +15,11 @@ import {
   UploadedPolicyRunner,
   stepTaskSpaceTarget,
 } from "@/lib/arm-participation.mjs";
+import {
+  PRECISION_SPEED_SCALE,
+  STANDARD_GAMEPAD,
+  readStandardGamepad,
+} from "@/lib/gamepad-controls.mjs";
 import { CUBE_COUNT, MujocoEngine, START_POSE, type PhysicsSnapshot } from "@/lib/mujoco-engine";
 
 const TASKS = [
@@ -84,6 +95,7 @@ type EngineStatus = "loading" | "ready" | "fallback";
 type ControlMode = "manual" | "policy";
 type PolicyChoice = (typeof POLICY_OPTIONS)[number]["id"] | "uploaded";
 type UploadState = { kind: "idle" | "loading" | "ready" | "error"; message: string };
+type GamepadConnection = { index: number; name: string };
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -97,6 +109,11 @@ function cubeOwner(position: [number, number, number]): CubeOwner {
 
 function countCubes(owners: CubeOwner[], owner: CubeOwner) {
   return owners.filter((cubeOwner) => cubeOwner === owner).length;
+}
+
+function readableGamepadName(id: string) {
+  const withoutMetadata = id.replace(/\s*\([^)]*(?:vendor|product)[^)]*\)\s*/gi, " ").trim();
+  return (withoutMetadata || "Standard gamepad").slice(0, 42);
 }
 
 function policyTargets(policy: number, task: string, elapsed: number) {
@@ -140,7 +157,10 @@ export function ArenaApp() {
   const [controlMode, setControlMode] = useState<ControlMode>("manual");
   const [manualLifted, setManualLifted] = useState(true);
   const [manualGripping, setManualGripping] = useState(false);
+  const [manualPrecision, setManualPrecision] = useState(false);
   const [joystickVisual, setJoystickVisual] = useState({ x: 0, y: 0 });
+  const [gamepadConnection, setGamepadConnection] = useState<GamepadConnection | null>(null);
+  const [controllerMapOpen, setControllerMapOpen] = useState(false);
   const [policyChoice, setPolicyChoice] = useState<PolicyChoice>("demo");
   const [uploadState, setUploadState] = useState<UploadState>({ kind: "idle", message: "No policy uploaded" });
   const [uploadedPolicyName, setUploadedPolicyName] = useState("");
@@ -163,9 +183,14 @@ export function ArenaApp() {
     [...MANUAL_HOME_TARGET] as [number, number, number],
   );
   const joystickRef = useRef({ x: 0, y: 0 });
+  const gamepadMoveRef = useRef({ x: 0, y: 0 });
+  const cameraControlRef = useRef<CameraControlState>({ x: 0, y: 0, resetToken: 0 });
+  const gamepadIndexRef = useRef<number | null>(null);
+  const gamepadButtonsRef = useRef<boolean[]>([]);
   const manualKeysRef = useRef(new Set<string>());
   const manualLiftedRef = useRef(true);
   const manualGrippingRef = useRef(false);
+  const manualPrecisionRef = useRef(false);
   const uploadedPolicyRef = useRef<InstanceType<typeof UploadedPolicyRunner> | null>(null);
   const uploadRequestRef = useRef(0);
   const elapsedRef = useRef(0);
@@ -188,12 +213,16 @@ export function ArenaApp() {
     setCombatStats({ atlas: 0, blaze: 0, blocks: 0 });
     lastCollisionEventRef.current = 0;
     joystickRef.current = { x: 0, y: 0 };
+    gamepadMoveRef.current = { x: 0, y: 0 };
     manualKeysRef.current.clear();
     manualLiftedRef.current = true;
     manualGrippingRef.current = false;
+    manualPrecisionRef.current = false;
     setJoystickVisual({ x: 0, y: 0 });
     setManualLifted(true);
     setManualGripping(false);
+    setManualPrecision(false);
+    setControllerMapOpen(false);
     updateTargets([...START_POSE]);
     uploadedPolicyRef.current?.reset({ task: taskId });
     const next = engineRef.current?.reset({
@@ -246,8 +275,8 @@ export function ArenaApp() {
         manualTargetRef.current = stepTaskSpaceTarget(
           manualTargetRef.current,
           {
-            x: joystickRef.current.x + keyboardX,
-            y: joystickRef.current.y + keyboardY,
+            x: joystickRef.current.x + gamepadMoveRef.current.x + keyboardX,
+            y: joystickRef.current.y + gamepadMoveRef.current.y + keyboardY,
           },
           0.016,
           manualLiftedRef.current,
@@ -330,11 +359,13 @@ export function ArenaApp() {
 
   const toggleRun = useCallback(() => {
     if (elapsedRef.current >= matchLength) resetEpisode();
+    setControllerMapOpen(false);
     setRunning((value) => !value);
   }, [matchLength, resetEpisode]);
 
   const selectControlMode = useCallback((mode: ControlMode) => {
     joystickRef.current = { x: 0, y: 0 };
+    gamepadMoveRef.current = { x: 0, y: 0 };
     manualKeysRef.current.clear();
     setJoystickVisual({ x: 0, y: 0 });
     if (mode === "manual") {
@@ -361,6 +392,21 @@ export function ArenaApp() {
     const next = !manualGrippingRef.current;
     manualGrippingRef.current = next;
     setManualGripping(next);
+  }, []);
+
+  const toggleManualPrecision = useCallback(() => {
+    const next = !manualPrecisionRef.current;
+    manualPrecisionRef.current = next;
+    setManualPrecision(next);
+  }, []);
+
+  const toggleControllerMap = useCallback(() => {
+    if (!controllerMapOpen) setRunning(false);
+    setControllerMapOpen(!controllerMapOpen);
+  }, [controllerMapOpen]);
+
+  const closeControllerMap = useCallback(() => {
+    setControllerMapOpen(false);
   }, []);
 
   const homeManualArm = useCallback(() => {
@@ -397,6 +443,132 @@ export function ArenaApp() {
   }, []);
 
   useEffect(() => {
+    if (!("getGamepads" in navigator)) return;
+
+    let animationFrame = 0;
+    let inputSuspended = !document.hasFocus();
+
+    const stopGamepadMotion = () => {
+      const wasMoving = Math.hypot(gamepadMoveRef.current.x, gamepadMoveRef.current.y) > 0.001;
+      gamepadMoveRef.current = { x: 0, y: 0 };
+      cameraControlRef.current.x = 0;
+      cameraControlRef.current.y = 0;
+      if (wasMoving) setJoystickVisual({ x: 0, y: 0 });
+    };
+
+    const registerGamepad = (gamepad: Gamepad) => {
+      if (gamepad.mapping !== "standard") return;
+      if (gamepadIndexRef.current === null) gamepadIndexRef.current = gamepad.index;
+      if (gamepadIndexRef.current !== gamepad.index) return;
+      const name = readableGamepadName(gamepad.id);
+      setGamepadConnection((current) => (
+        current?.index === gamepad.index && current.name === name
+          ? current
+          : { index: gamepad.index, name }
+      ));
+    };
+
+    const onGamepadConnected = (event: GamepadEvent) => registerGamepad(event.gamepad);
+    const onGamepadDisconnected = (event: GamepadEvent) => {
+      if (event.gamepad.index !== gamepadIndexRef.current) return;
+      gamepadIndexRef.current = null;
+      gamepadButtonsRef.current = [];
+      stopGamepadMotion();
+      setGamepadConnection(null);
+    };
+    const onWindowBlur = () => {
+      inputSuspended = true;
+      stopGamepadMotion();
+    };
+    const onWindowFocus = () => {
+      inputSuspended = false;
+    };
+
+    const pollGamepad = () => {
+      const gamepads = navigator.getGamepads();
+      let gamepad = gamepadIndexRef.current === null ? null : gamepads[gamepadIndexRef.current];
+      if (!gamepad || !gamepad.connected || gamepad.mapping !== "standard") {
+        const previousIndex = gamepadIndexRef.current;
+        gamepad = Array.from(gamepads).find((candidate) => candidate?.connected && candidate.mapping === "standard") ?? null;
+        gamepadIndexRef.current = gamepad?.index ?? null;
+        if (gamepadIndexRef.current !== previousIndex) gamepadButtonsRef.current = [];
+      }
+
+      if (!gamepad) {
+        stopGamepadMotion();
+        setGamepadConnection((current) => current === null ? current : null);
+        animationFrame = window.requestAnimationFrame(pollGamepad);
+        return;
+      }
+
+      registerGamepad(gamepad);
+      const reading = readStandardGamepad(gamepad, gamepadButtonsRef.current);
+      gamepadButtonsRef.current = reading.buttons;
+      const previousMove = gamepadMoveRef.current;
+      const canDrive = controlMode === "manual" && running && !controllerMapOpen && !inputSuspended;
+      const speedScale = manualPrecisionRef.current ? PRECISION_SPEED_SCALE : 1;
+      gamepadMoveRef.current = canDrive
+        ? { x: reading.move.x * speedScale, y: reading.move.y * speedScale }
+        : { x: 0, y: 0 };
+      if (
+        Math.hypot(gamepadMoveRef.current.x, gamepadMoveRef.current.y) > 0.001
+        || Math.hypot(previousMove.x, previousMove.y) > 0.001
+      ) {
+        setJoystickVisual(gamepadMoveRef.current);
+      }
+
+      cameraControlRef.current.x = controllerMapOpen || inputSuspended ? 0 : reading.look.x;
+      cameraControlRef.current.y = controllerMapOpen || inputSuspended ? 0 : reading.look.y;
+
+      const pressed = (button: number) => Boolean(reading.justPressed[button]);
+      if (!inputSuspended) {
+        if (pressed(STANDARD_GAMEPAD.buttons.menu)) toggleRun();
+        if (pressed(STANDARD_GAMEPAD.buttons.view)) toggleControllerMap();
+        if (pressed(STANDARD_GAMEPAD.buttons.rightStick)) {
+          setCameraPreset("arena");
+          cameraControlRef.current.resetToken += 1;
+        }
+        if (pressed(STANDARD_GAMEPAD.buttons.dpadUp)) setCameraPreset("overhead");
+        if (pressed(STANDARD_GAMEPAD.buttons.dpadDown)) setCameraPreset("arena");
+        if (pressed(STANDARD_GAMEPAD.buttons.dpadLeft)) setCameraPreset("atlas");
+        if (pressed(STANDARD_GAMEPAD.buttons.dpadRight)) setCameraPreset("blaze");
+
+        if (canDrive) {
+          if (pressed(STANDARD_GAMEPAD.buttons.a)) toggleManualGrip();
+          if (pressed(STANDARD_GAMEPAD.buttons.y)) toggleManualLift();
+          if (pressed(STANDARD_GAMEPAD.buttons.x)) toggleManualPrecision();
+          if (pressed(STANDARD_GAMEPAD.buttons.b)) homeManualArm();
+        }
+      }
+      animationFrame = window.requestAnimationFrame(pollGamepad);
+    };
+
+    window.addEventListener("gamepadconnected", onGamepadConnected);
+    window.addEventListener("gamepaddisconnected", onGamepadDisconnected);
+    window.addEventListener("blur", onWindowBlur);
+    window.addEventListener("focus", onWindowFocus);
+    animationFrame = window.requestAnimationFrame(pollGamepad);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("gamepadconnected", onGamepadConnected);
+      window.removeEventListener("gamepaddisconnected", onGamepadDisconnected);
+      window.removeEventListener("blur", onWindowBlur);
+      window.removeEventListener("focus", onWindowFocus);
+      stopGamepadMotion();
+    };
+  }, [
+    controlMode,
+    controllerMapOpen,
+    homeManualArm,
+    running,
+    toggleControllerMap,
+    toggleManualGrip,
+    toggleManualLift,
+    toggleManualPrecision,
+    toggleRun,
+  ]);
+
+  useEffect(() => {
     const movementKeys: Record<string, string> = {
       ArrowLeft: "left", KeyA: "left",
       ArrowRight: "right", KeyD: "right",
@@ -404,13 +576,18 @@ export function ArenaApp() {
       ArrowDown: "back", KeyS: "back",
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "Escape" && controllerMapOpen) {
+        event.preventDefault();
+        closeControllerMap();
+        return;
+      }
       if (
         event.target instanceof HTMLInputElement
-        || event.target instanceof HTMLButtonElement
         || event.target instanceof HTMLTextAreaElement
         || event.target instanceof HTMLSelectElement
       ) return;
       if (event.code === "Space") {
+        if (event.target instanceof HTMLButtonElement) return;
         event.preventDefault();
         toggleRun();
         return;
@@ -429,6 +606,7 @@ export function ArenaApp() {
       if (event.repeat) return;
       if (event.code === "KeyL") toggleManualLift();
       else if (event.code === "KeyG") toggleManualGrip();
+      else if (event.code === "KeyP") toggleManualPrecision();
       else if (event.code === "KeyR") homeManualArm();
       else return;
       event.preventDefault();
@@ -449,12 +627,13 @@ export function ArenaApp() {
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", clearControls);
     };
-  }, [controlMode, homeManualArm, releaseJoystick, resetEpisode, running, toggleManualGrip, toggleManualLift, toggleRun]);
+  }, [closeControllerMap, controlMode, controllerMapOpen, homeManualArm, releaseJoystick, resetEpisode, running, toggleManualGrip, toggleManualLift, toggleManualPrecision, toggleRun]);
 
   useEffect(() => {
     if (!running || controlMode !== "manual") {
       manualKeysRef.current.clear();
       joystickRef.current = { x: 0, y: 0 };
+      gamepadMoveRef.current = { x: 0, y: 0 };
     }
   }, [controlMode, running]);
 
@@ -526,7 +705,7 @@ export function ArenaApp() {
         </aside>
 
         <section className="stage">
-          <div className="scene-canvas"><ArenaScene cameraPreset={cameraPreset} joints={snapshot.joints} opponentJoints={snapshot.opponentJoints} playerProgress={reward} opponentProgress={opponentReward} cubes={snapshot.cubes} cubeOwners={cubeOwners} collision={snapshot.collision} running={running} taskId={selectedTaskId} /></div>
+          <div className="scene-canvas"><ArenaScene cameraPreset={cameraPreset} cameraControlRef={cameraControlRef} joints={snapshot.joints} opponentJoints={snapshot.opponentJoints} playerProgress={reward} opponentProgress={opponentReward} cubes={snapshot.cubes} cubeOwners={cubeOwners} collision={snapshot.collision} running={running} taskId={selectedTaskId} /></div>
           <div className="stage-toolbar">
             <div className={`live-pill ${engineStatus}`}><i /> {statusLabel}</div>
             <div className="camera-pills" aria-label="Change perspective">
@@ -544,6 +723,7 @@ export function ArenaApp() {
               <span>{snapshot.collision.force.toFixed(1)} N · {snapshot.collision.atlasLink} ↔ {snapshot.collision.blazeLink}</span>
             </div>
           )}
+          {controllerMapOpen && <ControllerMap controllerName={gamepadConnection?.name ?? null} onClose={closeControllerMap} />}
           <div className="competitor-labels" aria-hidden="true"><span className="atlas-label"><i />ATLAS</span><span className="blaze-label">BLAZE<i /></span></div>
           <div className="scene-caption">
             <div><span className="eyebrow">COMPETITORS</span><strong>2× SO-101 · Face-to-face</strong></div>
@@ -564,7 +744,11 @@ export function ArenaApp() {
           </div>
           {controlMode === "manual" ? (
             <section className="manual-console" aria-label="Manual SO-101 controls">
-              <div className="console-heading"><span><b>JOYSTICK DRIVE</b><small>One stick · three actions</small></span><i className={running ? "armed" : ""}>{running ? "LIVE" : "START MATCH"}</i></div>
+              <div className="console-heading"><span><b>{gamepadConnection ? "CONTROLLER DRIVE" : "JOYSTICK DRIVE"}</b><small>{gamepadConnection ? "Left stick · four actions" : "Drag, keys, or connect a gamepad"}</small></span><i className={running ? "armed" : ""}>{running ? "LIVE" : "START MATCH"}</i></div>
+              <div className={`gamepad-banner ${gamepadConnection ? "connected" : ""}`}>
+                <div><i /><span><strong>{gamepadConnection?.name ?? "XBOX / STANDARD GAMEPAD"}</strong><small>{gamepadConnection ? "PLAYER 1 · READY" : "PRESS ANY CONTROLLER BUTTON"}</small></span></div>
+                <button type="button" onClick={toggleControllerMap}>MAP <kbd>▣</kbd></button>
+              </div>
               <div
                 className={`task-joystick ${running ? "live" : "locked"}`}
                 role="group"
@@ -598,15 +782,16 @@ export function ArenaApp() {
                 <div
                   className="joystick-knob"
                   style={{ transform: `translate(${joystickVisual.x * 39}px, ${joystickVisual.y * 39}px)` }}
-                ><span>MOVE</span></div>
+                ><span>{gamepadConnection ? "LS" : "MOVE"}</span></div>
               </div>
               <div className="manual-actions" aria-label="Manual arm actions">
-                <button className={!manualLifted ? "active" : ""} disabled={!running} onClick={toggleManualLift} aria-pressed={!manualLifted}><span>{manualLifted ? "↓" : "↑"}</span><strong>{manualLifted ? "LOWER" : "LIFT"}</strong><small>{manualLifted ? "TO CUBE" : "TO TRAVEL"} · L</small></button>
-                <button className={manualGripping ? "active grip" : ""} disabled={!running} onClick={toggleManualGrip} aria-pressed={manualGripping}><span>{manualGripping ? "◇" : "◆"}</span><strong>{manualGripping ? "DROP" : "GRAB"}</strong><small>{manualGripping ? "OPEN" : "CLOSE"} · G</small></button>
-                <button disabled={!running} onClick={homeManualArm}><span>⌂</span><strong>HOME</strong><small>SAFE POSE · R</small></button>
+                <button className={!manualLifted ? "active" : ""} disabled={!running} onClick={toggleManualLift} aria-pressed={!manualLifted}><span className="xbox-key y">Y</span><strong>{manualLifted ? "LOWER" : "LIFT"}</strong><small>{manualLifted ? "TO CUBE" : "TO TRAVEL"} · L</small></button>
+                <button className={manualGripping ? "active grip" : ""} disabled={!running} onClick={toggleManualGrip} aria-pressed={manualGripping}><span className="xbox-key a">A</span><strong>{manualGripping ? "DROP" : "GRAB"}</strong><small>{manualGripping ? "OPEN" : "CLOSE"} · G</small></button>
+                <button className={manualPrecision ? "active precision" : ""} disabled={!running} onClick={toggleManualPrecision} aria-pressed={manualPrecision}><span className="xbox-key x">X</span><strong>PRECISION</strong><small>{manualPrecision ? "35% SPEED" : "FULL SPEED"} · P</small></button>
+                <button disabled={!running} onClick={homeManualArm}><span className="xbox-key b">B</span><strong>HOME</strong><small>SAFE POSE · R</small></button>
               </div>
-              <div className="manual-state" aria-live="polite"><span><i className={manualLifted ? "lifted" : ""} />{manualLifted ? "TRAVEL HEIGHT" : "CUBE HEIGHT"}</span><span><i className={manualGripping ? "gripping" : ""} />{manualGripping ? "GRIP CLOSED" : "GRIP OPEN"}</span></div>
-              <p className="control-note">Drag the stick or use WASD / arrow keys. MuJoCo inverse kinematics coordinates all six joints for you.</p>
+              <div className="manual-state" aria-live="polite"><span><i className={manualLifted ? "lifted" : ""} />{manualLifted ? "TRAVEL" : "CUBE HEIGHT"}</span><span><i className={manualGripping ? "gripping" : ""} />{manualGripping ? "GRIP CLOSED" : "GRIP OPEN"}</span><span><i className={manualPrecision ? "precision" : ""} />{manualPrecision ? "PRECISION" : "FULL SPEED"}</span></div>
+              <p className="control-note">{gamepadConnection ? "LS moves · RS orbits · D-pad changes camera." : "Drag the stick or use WASD / arrow keys."} MuJoCo coordinates the joints.</p>
             </section>
           ) : (
             <section className="policy-console" aria-label="Policy controls">
@@ -641,9 +826,9 @@ export function ArenaApp() {
           <div className="setup-group"><label>MATCH LENGTH <b>{matchLength} SEC{isHeist ? " · FIXED" : ""}</b></label><input type="range" min="10" max="60" step="5" value={matchLength} disabled={isHeist} onChange={(event) => setEpisodeLength(Number(event.target.value))} aria-label="Match length" /><div className="range-labels"><span>{isHeist ? "ONE-MINUTE MATCH" : "10s"}</span><span>60s</span></div></div>
           <button className="setup-group randomization-button" onClick={() => setRandomization((value) => !value)} aria-pressed={randomization}><label>DOMAIN RANDOMIZATION <b>{randomization ? "ON" : "OFF"}</b></label><span className="random-grid"><span><i />Lighting</span><span><i />Friction</span><span><i />Object pose</span><span><i />Camera</span></span></button>
           <div className="episode-progress"><span><b>{running ? matchCall : elapsed >= matchLength ? resultLabel : "READY TO RACE"}</b><i>{elapsed.toFixed(1)} / {matchLength}s</i></span><div><i style={{ width: `${progress}%` }} /></div></div>
-          <div className="run-actions"><button className={`run-button ${running ? "pause" : ""}`} onClick={toggleRun}><span>{running ? "Ⅱ" : "▶"}</span> {running ? "PAUSE MATCH" : elapsed >= matchLength ? "RACE AGAIN" : elapsed > 0 ? "RESUME MATCH" : "START MATCH"}<small>SPACE</small></button><button className="reset-button" onClick={() => resetEpisode()} aria-label="Reset match">↺</button></div>
+          <div className="run-actions"><button className={`run-button ${running ? "pause" : ""}`} onClick={toggleRun}><span>{running ? "Ⅱ" : "▶"}</span> {running ? "PAUSE MATCH" : elapsed >= matchLength ? "RACE AGAIN" : elapsed > 0 ? "RESUME MATCH" : "START MATCH"}<small>{gamepadConnection ? "☰ / SPACE" : "SPACE"}</small></button><button className="reset-button" onClick={() => resetEpisode()} aria-label="Reset match">↺</button></div>
           <div className="metric-strip competitor-metrics"><div><span>ATLAS {isHeist ? "CUBES" : "SCORE"} · {combatStats.atlas} HITS</span><strong>{atlasScore}</strong></div><div><span>BLAZE {isHeist ? "CUBES" : "SCORE"} · {combatStats.blaze} HITS</span><strong>{blazeScore}</strong></div></div>
-          <p className="hint">{controlMode === "manual" ? "Drag the joystick while the match is live" : "Your selected policy controls Atlas"} · <kbd>X</kbd> reset</p>
+          <p className="hint">{controlMode === "manual" ? (gamepadConnection ? "Xbox-style controller ready" : "Drag the joystick while the match is live") : "Your selected policy controls Atlas"} · <kbd>X KEY</kbd> reset</p>
         </aside>
       </section>
     </main>

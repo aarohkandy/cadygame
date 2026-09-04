@@ -2,13 +2,14 @@
 
 import { ContactShadows, Grid, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import * as THREE from "three";
 import type { DuelCollision, PhysicsCube } from "@/lib/mujoco-engine";
 
 export type CameraPreset = "arena" | "atlas" | "blaze" | "overhead";
 export type CubeOwner = "neutral" | "atlas" | "blaze";
+export type CameraControlState = { x: number; y: number; resetToken: number };
 
 type ArenaSceneProps = {
   cameraPreset: CameraPreset;
@@ -21,6 +22,7 @@ type ArenaSceneProps = {
   collision: DuelCollision;
   running: boolean;
   taskId: string;
+  cameraControlRef: RefObject<CameraControlState>;
 };
 
 type JointNode = {
@@ -35,6 +37,26 @@ const ROBOT_BASE_OFFSET = 0.32;
 const JOINT_ORDER = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"];
 const ATLAS_COLOR = new THREE.Color("#2f8062");
 const BLAZE_COLOR = new THREE.Color("#ef6b42");
+const MAX_IMPACT_SPARKS = 36;
+
+type ImpactSpark = {
+  age: number;
+  color: THREE.Color;
+  life: number;
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+};
+
+function seededRandom(seed: number) {
+  let state = seed >>> 0;
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 function numbers(value: string | null, fallback: number[]) {
   if (!value) return fallback;
@@ -359,16 +381,125 @@ function CompetitionObjects(props: Pick<ArenaSceneProps, "cubes" | "cubeOwners" 
 }
 
 function ImpactMarker({ collision }: { collision: DuelCollision }) {
-  if (collision.kind === "none") return null;
+  const geometryRef = useRef<THREE.BufferGeometry>(null);
+  const sparksRef = useRef<ImpactSpark[]>([]);
+  const lastEventRef = useRef(0);
+
+  useEffect(() => {
+    const geometry = geometryRef.current;
+    if (!geometry) return;
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MAX_IMPACT_SPARKS * 3), 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(MAX_IMPACT_SPARKS * 3), 3));
+    geometry.setDrawRange(0, 0);
+  }, []);
+
+  useEffect(() => {
+    if (collision.kind === "none" || collision.eventId === 0) {
+      lastEventRef.current = 0;
+      return;
+    }
+    if (collision.eventId === lastEventRef.current) return;
+    lastEventRef.current = collision.eventId;
+
+    const isStrike = collision.kind === "strike";
+    const impact = THREE.MathUtils.clamp(collision.force / 2, 0, 1);
+    const sparkCount = Math.min(
+      MAX_IMPACT_SPARKS,
+      Math.round((isStrike ? 24 : 12) + impact * (isStrike ? 12 : 7)),
+    );
+    const random = seededRandom(collision.eventId * 31 + (isStrike ? 17 : 7));
+    const origin = new THREE.Vector3(...collision.position);
+    const baseColor = new THREE.Color(
+      collision.attacker === "atlas"
+        ? "#66f0ba"
+        : collision.attacker === "blaze"
+          ? "#ff7048"
+          : "#f1c75b",
+    );
+    const hotColor = new THREE.Color("#fff4c2");
+    const newSparks = Array.from({ length: sparkCount }, () => {
+      const angle = random() * Math.PI * 2;
+      const vertical = THREE.MathUtils.lerp(-0.2, 0.78, random());
+      const radial = Math.sqrt(1 - vertical * vertical);
+      const speed = THREE.MathUtils.lerp(
+        isStrike ? 0.28 : 0.16,
+        isStrike ? 0.52 : 0.32,
+        random(),
+      ) * (0.85 + impact * 0.3);
+      const direction = new THREE.Vector3(
+        Math.cos(angle) * radial,
+        Math.sin(angle) * radial,
+        vertical,
+      );
+
+      return {
+        age: 0,
+        color: baseColor.clone().lerp(hotColor, 0.35 + random() * 0.55),
+        life: THREE.MathUtils.lerp(isStrike ? 0.42 : 0.28, isStrike ? 0.72 : 0.5, random()),
+        position: origin.clone().addScaledVector(direction, random() * 0.008),
+        velocity: direction.multiplyScalar(speed),
+      };
+    });
+    const keepCount = Math.max(0, MAX_IMPACT_SPARKS - newSparks.length);
+    const retainedSparks = keepCount > 0 ? sparksRef.current.slice(-keepCount) : [];
+    sparksRef.current = [...retainedSparks, ...newSparks];
+  }, [collision]);
+
+  useFrame((_, delta) => {
+    const geometry = geometryRef.current;
+    if (!geometry) return;
+    const positions = geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+    const colors = geometry.getAttribute("color") as THREE.BufferAttribute | undefined;
+    if (!positions || !colors) return;
+
+    const frameDelta = Math.min(delta, 1 / 30);
+    const activeSparks: ImpactSpark[] = [];
+    sparksRef.current.forEach((spark) => {
+      spark.age += frameDelta;
+      if (spark.age >= spark.life) return;
+      spark.velocity.z -= 0.62 * frameDelta;
+      spark.velocity.multiplyScalar(Math.exp(-1.8 * frameDelta));
+      spark.position.addScaledVector(spark.velocity, frameDelta);
+      activeSparks.push(spark);
+    });
+    sparksRef.current = activeSparks;
+
+    activeSparks.forEach((spark, index) => {
+      const fade = Math.pow(1 - spark.age / spark.life, 1.4);
+      positions.setXYZ(index, spark.position.x, spark.position.y, spark.position.z);
+      colors.setXYZ(index, spark.color.r * fade, spark.color.g * fade, spark.color.b * fade);
+    });
+    geometry.setDrawRange(0, activeSparks.length);
+    positions.needsUpdate = true;
+    colors.needsUpdate = true;
+  });
+
   const color = collision.attacker === "atlas" ? "#57b28c" : collision.attacker === "blaze" ? "#ff7048" : "#f1c75b";
   return (
-    <group position={collision.position}>
-      <pointLight color={color} intensity={1.4} distance={0.22} decay={2} />
-      <mesh>
-        <sphereGeometry args={[0.012, 16, 12]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.2} />
-      </mesh>
-    </group>
+    <>
+      <points frustumCulled={false}>
+        <bufferGeometry ref={geometryRef} />
+        <pointsMaterial
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          opacity={0.95}
+          size={0.012}
+          sizeAttenuation
+          toneMapped={false}
+          transparent
+          vertexColors
+        />
+      </points>
+      {collision.kind !== "none" && (
+        <group position={collision.position}>
+          <pointLight color={color} intensity={collision.kind === "strike" ? 2.1 : 1.4} distance={0.25} decay={2} />
+          <mesh>
+            <sphereGeometry args={[collision.kind === "strike" ? 0.014 : 0.01, 16, 12]} />
+            <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.5} />
+          </mesh>
+        </group>
+      )}
+    </>
   );
 }
 
@@ -379,12 +510,51 @@ const CAMERA_POSITIONS: Record<CameraPreset, THREE.Vector3> = {
   overhead: new THREE.Vector3(0.01, 2.65, 0.01),
 };
 
-function CameraRig({ preset }: { preset: CameraPreset }) {
+function CameraRig({ preset, controlRef }: { preset: CameraPreset; controlRef: RefObject<CameraControlState> }) {
   const { camera } = useThree();
-  const targetPosition = useMemo(() => CAMERA_POSITIONS[preset].clone(), [preset]);
+  const activePresetRef = useRef<CameraPreset>(preset);
+  const targetPositionRef = useRef(CAMERA_POSITIONS[preset].clone());
+  const transitioningRef = useRef(true);
+  const resetTokenRef = useRef(0);
+  const lookAtRef = useRef(new THREE.Vector3(0, 0.32, 0));
+  const sphericalRef = useRef(new THREE.Spherical());
+  const offsetRef = useRef(new THREE.Vector3());
+
   useFrame((_, delta) => {
-    camera.position.lerp(targetPosition, 1 - Math.exp(-delta * 4.8));
-    camera.lookAt(0, 0.32, 0);
+    const control = controlRef.current;
+    if (!control) return;
+    const lookAt = lookAtRef.current;
+    const spherical = sphericalRef.current;
+    const offset = offsetRef.current;
+    const resetRequested = control.resetToken !== resetTokenRef.current;
+    if (preset !== activePresetRef.current || resetRequested) {
+      activePresetRef.current = preset;
+      resetTokenRef.current = control.resetToken;
+      targetPositionRef.current.copy(CAMERA_POSITIONS[preset]);
+      transitioningRef.current = true;
+    }
+
+    if (transitioningRef.current) {
+      camera.position.lerp(targetPositionRef.current, 1 - Math.exp(-delta * 6.2));
+      camera.lookAt(lookAt);
+      if (camera.position.distanceToSquared(targetPositionRef.current) < 0.00001) {
+        camera.position.copy(targetPositionRef.current);
+        transitioningRef.current = false;
+      }
+      return;
+    }
+
+    if (preset !== "arena" || Math.hypot(control.x, control.y) < 0.001) return;
+    offset.copy(camera.position).sub(lookAt);
+    spherical.setFromVector3(offset);
+    spherical.theta -= control.x * delta * 1.75;
+    spherical.phi = THREE.MathUtils.clamp(
+      spherical.phi + control.y * delta * 1.35,
+      0.18,
+      1.48,
+    );
+    camera.position.copy(offset.setFromSpherical(spherical).add(lookAt));
+    camera.lookAt(lookAt);
   });
   return null;
 }
@@ -420,7 +590,7 @@ function Scene(props: ArenaSceneProps) {
       <ArenaMarkings />
       <Grid position={[0, 0.001, 0]} args={[3.5, 3.5]} cellSize={0.1} cellThickness={0.5} cellColor="#7f8c83" sectionSize={0.5} sectionThickness={0.8} sectionColor="#66766d" fadeDistance={2.8} fadeStrength={1.5} infiniteGrid />
       <ContactShadows position={[0, 0.004, 0]} opacity={0.36} scale={3.5} blur={2.5} far={1.5} />
-      <CameraRig preset={props.cameraPreset} />
+      <CameraRig preset={props.cameraPreset} controlRef={props.cameraControlRef} />
       <OrbitControls makeDefault target={[0, 0.32, 0]} enabled={props.cameraPreset === "arena"} enablePan={false} minDistance={1.25} maxDistance={3} minPolarAngle={0.18} maxPolarAngle={1.48} />
     </>
   );

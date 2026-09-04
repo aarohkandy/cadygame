@@ -45,8 +45,17 @@ Choose **Operate by hand** and start the match. Drag the joystick to move the gr
 - Lift/Lower: one height toggle or `L`
 - Grab/Drop: one gripper toggle or `G`
 - Home: safe-pose button or `R`
+- Precision: 35% movement-speed toggle or `P`
 
-The same controls work with a mouse or touchscreen. The joystick target is workspace-limited, height changes are rate-limited, and **Home** restores the standard starting configuration without resetting the match.
+Xbox and other standard browser gamepads use the game-first layout:
+
+- Left stick: move the gripper across the table
+- `A`: grab/drop; `Y`: lift/lower; `X`: precision; `B`: home
+- Right stick: orbit the arena camera; right-stick click: recenter
+- D-pad: Top, Arena, Atlas, and Blaze camera presets
+- Menu: start/pause/resume; View: open/close the controller map
+
+The same controls work with a mouse or touchscreen. The joystick target is workspace-limited, controller drift is removed with a radial deadzone, height changes are rate-limited, and **Home** restores the standard starting configuration without resetting the match. Gamepad motion stops immediately if the controller disconnects or the browser loses focus.
 
 ## Upload a policy
 
