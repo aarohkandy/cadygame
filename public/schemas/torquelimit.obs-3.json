@@ -1,0 +1,1237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "torquelimit.obs/3",
+  "title": "torquelimit.obs/3",
+  "description": "TORQUE LIMIT observation, ego frame of the observing seat: origin at its mount on the table plane, +x toward the opponent base, +z up, +y = z cross x. Quaternions are wxyz with w >= 0. Joint order follows joint_names.",
+  "type": "object",
+  "x-joint-names": [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_roll",
+    "gripper"
+  ],
+  "x-link-ids": [
+    "base",
+    "shoulder",
+    "upper_arm",
+    "lower_arm",
+    "wrist",
+    "gripper",
+    "camera_mount",
+    "moving_jaw"
+  ],
+  "x-core-cube-index": 4,
+  "required": [
+    "state",
+    "self_ext",
+    "opponent_state",
+    "game",
+    "environment_state",
+    "contacts"
+  ],
+  "properties": {
+    "state": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": {
+        "type": "number"
+      },
+      "x-dtype": "float32",
+      "x-fields": [
+        {
+          "index": 0,
+          "name": "self.q.shoulder_pan",
+          "unit": "rad",
+          "description": "joint position of shoulder_pan"
+        },
+        {
+          "index": 1,
+          "name": "self.q.shoulder_lift",
+          "unit": "rad",
+          "description": "joint position of shoulder_lift"
+        },
+        {
+          "index": 2,
+          "name": "self.q.elbow_flex",
+          "unit": "rad",
+          "description": "joint position of elbow_flex"
+        },
+        {
+          "index": 3,
+          "name": "self.q.wrist_flex",
+          "unit": "rad",
+          "description": "joint position of wrist_flex"
+        },
+        {
+          "index": 4,
+          "name": "self.q.wrist_roll",
+          "unit": "rad",
+          "description": "joint position of wrist_roll"
+        },
+        {
+          "index": 5,
+          "name": "self.q.gripper",
+          "unit": "rad",
+          "description": "joint position of gripper"
+        },
+        {
+          "index": 6,
+          "name": "self.qd.shoulder_pan",
+          "unit": "rad/s",
+          "description": "joint velocity of shoulder_pan"
+        },
+        {
+          "index": 7,
+          "name": "self.qd.shoulder_lift",
+          "unit": "rad/s",
+          "description": "joint velocity of shoulder_lift"
+        },
+        {
+          "index": 8,
+          "name": "self.qd.elbow_flex",
+          "unit": "rad/s",
+          "description": "joint velocity of elbow_flex"
+        },
+        {
+          "index": 9,
+          "name": "self.qd.wrist_flex",
+          "unit": "rad/s",
+          "description": "joint velocity of wrist_flex"
+        },
+        {
+          "index": 10,
+          "name": "self.qd.wrist_roll",
+          "unit": "rad/s",
+          "description": "joint velocity of wrist_roll"
+        },
+        {
+          "index": 11,
+          "name": "self.qd.gripper",
+          "unit": "rad/s",
+          "description": "joint velocity of gripper"
+        }
+      ]
+    },
+    "self_ext": {
+      "type": "array",
+      "minItems": 32,
+      "maxItems": 32,
+      "items": {
+        "type": "number"
+      },
+      "x-dtype": "float32",
+      "x-fields": [
+        {
+          "index": 0,
+          "name": "self.ee.pos.x",
+          "unit": "m",
+          "description": "gripperframe site position, ego x"
+        },
+        {
+          "index": 1,
+          "name": "self.ee.pos.y",
+          "unit": "m",
+          "description": "gripperframe site position, ego y"
+        },
+        {
+          "index": 2,
+          "name": "self.ee.pos.z",
+          "unit": "m",
+          "description": "gripperframe site position, ego z"
+        },
+        {
+          "index": 3,
+          "name": "self.ee.quat.w",
+          "unit": "1",
+          "description": "gripperframe site quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 4,
+          "name": "self.ee.quat.x",
+          "unit": "1",
+          "description": "gripperframe site quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 5,
+          "name": "self.ee.quat.y",
+          "unit": "1",
+          "description": "gripperframe site quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 6,
+          "name": "self.ee.quat.z",
+          "unit": "1",
+          "description": "gripperframe site quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 7,
+          "name": "self.ee.linvel.x",
+          "unit": "m/s",
+          "description": "gripperframe site linear velocity, ego x"
+        },
+        {
+          "index": 8,
+          "name": "self.ee.linvel.y",
+          "unit": "m/s",
+          "description": "gripperframe site linear velocity, ego y"
+        },
+        {
+          "index": 9,
+          "name": "self.ee.linvel.z",
+          "unit": "m/s",
+          "description": "gripperframe site linear velocity, ego z"
+        },
+        {
+          "index": 10,
+          "name": "self.wrist_pos.x",
+          "unit": "m",
+          "description": "gripper body origin (wrist_roll axis point), ego x"
+        },
+        {
+          "index": 11,
+          "name": "self.wrist_pos.y",
+          "unit": "m",
+          "description": "gripper body origin (wrist_roll axis point), ego y"
+        },
+        {
+          "index": 12,
+          "name": "self.wrist_pos.z",
+          "unit": "m",
+          "description": "gripper body origin (wrist_roll axis point), ego z"
+        },
+        {
+          "index": 13,
+          "name": "self.tau.shoulder_pan",
+          "unit": "N*m",
+          "description": "actuator force (clamped to forcerange) of shoulder_pan"
+        },
+        {
+          "index": 14,
+          "name": "self.tau.shoulder_lift",
+          "unit": "N*m",
+          "description": "actuator force (clamped to forcerange) of shoulder_lift"
+        },
+        {
+          "index": 15,
+          "name": "self.tau.elbow_flex",
+          "unit": "N*m",
+          "description": "actuator force (clamped to forcerange) of elbow_flex"
+        },
+        {
+          "index": 16,
+          "name": "self.tau.wrist_flex",
+          "unit": "N*m",
+          "description": "actuator force (clamped to forcerange) of wrist_flex"
+        },
+        {
+          "index": 17,
+          "name": "self.tau.wrist_roll",
+          "unit": "N*m",
+          "description": "actuator force (clamped to forcerange) of wrist_roll"
+        },
+        {
+          "index": 18,
+          "name": "self.tau.gripper",
+          "unit": "N*m",
+          "description": "actuator force (clamped to forcerange) of gripper"
+        },
+        {
+          "index": 19,
+          "name": "self.ctrl.shoulder_pan",
+          "unit": "rad",
+          "description": "servo target now of shoulder_pan"
+        },
+        {
+          "index": 20,
+          "name": "self.ctrl.shoulder_lift",
+          "unit": "rad",
+          "description": "servo target now of shoulder_lift"
+        },
+        {
+          "index": 21,
+          "name": "self.ctrl.elbow_flex",
+          "unit": "rad",
+          "description": "servo target now of elbow_flex"
+        },
+        {
+          "index": 22,
+          "name": "self.ctrl.wrist_flex",
+          "unit": "rad",
+          "description": "servo target now of wrist_flex"
+        },
+        {
+          "index": 23,
+          "name": "self.ctrl.wrist_roll",
+          "unit": "rad",
+          "description": "servo target now of wrist_roll"
+        },
+        {
+          "index": 24,
+          "name": "self.ctrl.gripper",
+          "unit": "rad",
+          "description": "servo target now of gripper"
+        },
+        {
+          "index": 25,
+          "name": "last_action.shoulder_pan",
+          "unit": "rad",
+          "description": "targets applied at the previous control tick of shoulder_pan"
+        },
+        {
+          "index": 26,
+          "name": "last_action.shoulder_lift",
+          "unit": "rad",
+          "description": "targets applied at the previous control tick of shoulder_lift"
+        },
+        {
+          "index": 27,
+          "name": "last_action.elbow_flex",
+          "unit": "rad",
+          "description": "targets applied at the previous control tick of elbow_flex"
+        },
+        {
+          "index": 28,
+          "name": "last_action.wrist_flex",
+          "unit": "rad",
+          "description": "targets applied at the previous control tick of wrist_flex"
+        },
+        {
+          "index": 29,
+          "name": "last_action.wrist_roll",
+          "unit": "rad",
+          "description": "targets applied at the previous control tick of wrist_roll"
+        },
+        {
+          "index": 30,
+          "name": "last_action.gripper",
+          "unit": "rad",
+          "description": "targets applied at the previous control tick of gripper"
+        },
+        {
+          "index": 31,
+          "name": "self.gripper_opening",
+          "unit": "1",
+          "description": "(q5 - 0.04) / (1.15 - 0.04)"
+        }
+      ]
+    },
+    "opponent_state": {
+      "type": "array",
+      "minItems": 28,
+      "maxItems": 28,
+      "items": {
+        "type": "number"
+      },
+      "x-dtype": "float32",
+      "x-fields": [
+        {
+          "index": 0,
+          "name": "opp.q.shoulder_pan",
+          "unit": "rad",
+          "description": "opponent joint position of shoulder_pan"
+        },
+        {
+          "index": 1,
+          "name": "opp.q.shoulder_lift",
+          "unit": "rad",
+          "description": "opponent joint position of shoulder_lift"
+        },
+        {
+          "index": 2,
+          "name": "opp.q.elbow_flex",
+          "unit": "rad",
+          "description": "opponent joint position of elbow_flex"
+        },
+        {
+          "index": 3,
+          "name": "opp.q.wrist_flex",
+          "unit": "rad",
+          "description": "opponent joint position of wrist_flex"
+        },
+        {
+          "index": 4,
+          "name": "opp.q.wrist_roll",
+          "unit": "rad",
+          "description": "opponent joint position of wrist_roll"
+        },
+        {
+          "index": 5,
+          "name": "opp.q.gripper",
+          "unit": "rad",
+          "description": "opponent joint position of gripper"
+        },
+        {
+          "index": 6,
+          "name": "opp.qd.shoulder_pan",
+          "unit": "rad/s",
+          "description": "opponent joint velocity of shoulder_pan"
+        },
+        {
+          "index": 7,
+          "name": "opp.qd.shoulder_lift",
+          "unit": "rad/s",
+          "description": "opponent joint velocity of shoulder_lift"
+        },
+        {
+          "index": 8,
+          "name": "opp.qd.elbow_flex",
+          "unit": "rad/s",
+          "description": "opponent joint velocity of elbow_flex"
+        },
+        {
+          "index": 9,
+          "name": "opp.qd.wrist_flex",
+          "unit": "rad/s",
+          "description": "opponent joint velocity of wrist_flex"
+        },
+        {
+          "index": 10,
+          "name": "opp.qd.wrist_roll",
+          "unit": "rad/s",
+          "description": "opponent joint velocity of wrist_roll"
+        },
+        {
+          "index": 11,
+          "name": "opp.qd.gripper",
+          "unit": "rad/s",
+          "description": "opponent joint velocity of gripper"
+        },
+        {
+          "index": 12,
+          "name": "opp.ee.pos.x",
+          "unit": "m",
+          "description": "opponent gripperframe site position, ego x"
+        },
+        {
+          "index": 13,
+          "name": "opp.ee.pos.y",
+          "unit": "m",
+          "description": "opponent gripperframe site position, ego y"
+        },
+        {
+          "index": 14,
+          "name": "opp.ee.pos.z",
+          "unit": "m",
+          "description": "opponent gripperframe site position, ego z"
+        },
+        {
+          "index": 15,
+          "name": "opp.ee.quat.w",
+          "unit": "1",
+          "description": "opponent gripperframe site quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 16,
+          "name": "opp.ee.quat.x",
+          "unit": "1",
+          "description": "opponent gripperframe site quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 17,
+          "name": "opp.ee.quat.y",
+          "unit": "1",
+          "description": "opponent gripperframe site quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 18,
+          "name": "opp.ee.quat.z",
+          "unit": "1",
+          "description": "opponent gripperframe site quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 19,
+          "name": "opp.ee.linvel.x",
+          "unit": "m/s",
+          "description": "opponent gripperframe site linear velocity, ego x"
+        },
+        {
+          "index": 20,
+          "name": "opp.ee.linvel.y",
+          "unit": "m/s",
+          "description": "opponent gripperframe site linear velocity, ego y"
+        },
+        {
+          "index": 21,
+          "name": "opp.ee.linvel.z",
+          "unit": "m/s",
+          "description": "opponent gripperframe site linear velocity, ego z"
+        },
+        {
+          "index": 22,
+          "name": "opp.elbow_pos.x",
+          "unit": "m",
+          "description": "opponent lower_arm body origin, ego x"
+        },
+        {
+          "index": 23,
+          "name": "opp.elbow_pos.y",
+          "unit": "m",
+          "description": "opponent lower_arm body origin, ego y"
+        },
+        {
+          "index": 24,
+          "name": "opp.elbow_pos.z",
+          "unit": "m",
+          "description": "opponent lower_arm body origin, ego z"
+        },
+        {
+          "index": 25,
+          "name": "opp.wrist_pos.x",
+          "unit": "m",
+          "description": "opponent gripper body origin, ego x"
+        },
+        {
+          "index": 26,
+          "name": "opp.wrist_pos.y",
+          "unit": "m",
+          "description": "opponent gripper body origin, ego y"
+        },
+        {
+          "index": 27,
+          "name": "opp.wrist_pos.z",
+          "unit": "m",
+          "description": "opponent gripper body origin, ego z"
+        }
+      ]
+    },
+    "game": {
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "items": {
+        "type": "number"
+      },
+      "x-dtype": "float32",
+      "x-fields": [
+        {
+          "index": 0,
+          "name": "self.integrity_frac",
+          "unit": "1",
+          "description": "integrity / integrity_max"
+        },
+        {
+          "index": 1,
+          "name": "opp.integrity_frac",
+          "unit": "1",
+          "description": "opponent integrity / integrity_max"
+        },
+        {
+          "index": 2,
+          "name": "phase.time_remaining_frac",
+          "unit": "1",
+          "description": "time remaining / current phase length; 0 outside fight phases"
+        },
+        {
+          "index": 3,
+          "name": "phase.is_fight",
+          "unit": "bool",
+          "description": "1 in fight or sudden_death"
+        },
+        {
+          "index": 4,
+          "name": "phase.sudden_death",
+          "unit": "bool",
+          "description": "1 in sudden death"
+        },
+        {
+          "index": 5,
+          "name": "round.rounds_won_diff_frac",
+          "unit": "1",
+          "description": "(self - opponent rounds won) / ceil(best_of / 2)"
+        },
+        {
+          "index": 6,
+          "name": "core.lock_in_signed_frac",
+          "unit": "1",
+          "description": "+remaining / owner's full lock-in if self owns the Core, - if the opponent owns it, 0 otherwise"
+        },
+        {
+          "index": 7,
+          "name": "core.lock_in_full",
+          "unit": "1",
+          "description": "owner's full lock-in / 8; 0 when unowned"
+        },
+        {
+          "index": 8,
+          "name": "core.live",
+          "unit": "bool",
+          "description": "1 while the Core is live"
+        },
+        {
+          "index": 9,
+          "name": "contact.touching",
+          "unit": "bool",
+          "description": "1 if the arms touch with more than 0.3 N this step"
+        },
+        {
+          "index": 10,
+          "name": "self.heat_frac",
+          "unit": "1",
+          "description": "heat / 100; Arcade only, 0 in physical scoring"
+        },
+        {
+          "index": 11,
+          "name": "opp.charge_public",
+          "unit": "1",
+          "description": "opponent charge c when c >= 0.25, else 0; Arcade only"
+        },
+        {
+          "index": 12,
+          "name": "self.servo_state_code",
+          "unit": "1",
+          "description": "servo state code / 5 (normal 0, micro 1, stagger 2, stun 3, cutout 4, offline 5); physical scoring reports offline only"
+        },
+        {
+          "index": 13,
+          "name": "opp.servo_state_code",
+          "unit": "1",
+          "description": "opponent servo state code / 5, same rule"
+        },
+        {
+          "index": 14,
+          "name": "self.servo_state_remaining_s",
+          "unit": "s",
+          "description": "time left in the current servo state; Arcade only"
+        },
+        {
+          "index": 15,
+          "name": "self.guard_active",
+          "unit": "bool",
+          "description": "guard intent accepted by the rules; Arcade only"
+        }
+      ]
+    },
+    "environment_state": {
+      "type": "array",
+      "minItems": 81,
+      "maxItems": 81,
+      "items": {
+        "type": "number"
+      },
+      "x-dtype": "float32",
+      "x-fields": [
+        {
+          "index": 0,
+          "name": "cube0.pos.x",
+          "unit": "m",
+          "description": "cube 0 position, ego x"
+        },
+        {
+          "index": 1,
+          "name": "cube0.pos.y",
+          "unit": "m",
+          "description": "cube 0 position, ego y"
+        },
+        {
+          "index": 2,
+          "name": "cube0.pos.z",
+          "unit": "m",
+          "description": "cube 0 position, ego z"
+        },
+        {
+          "index": 3,
+          "name": "cube0.quat.w",
+          "unit": "1",
+          "description": "cube 0 quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 4,
+          "name": "cube0.quat.x",
+          "unit": "1",
+          "description": "cube 0 quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 5,
+          "name": "cube0.quat.y",
+          "unit": "1",
+          "description": "cube 0 quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 6,
+          "name": "cube0.quat.z",
+          "unit": "1",
+          "description": "cube 0 quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 7,
+          "name": "cube0.parked",
+          "unit": "bool",
+          "description": "1 while cube 0 is parked off the table"
+        },
+        {
+          "index": 8,
+          "name": "cube0.held_by",
+          "unit": "1",
+          "description": "+1 held by self, -1 by the opponent, 0 none (cube 0)"
+        },
+        {
+          "index": 9,
+          "name": "cube1.pos.x",
+          "unit": "m",
+          "description": "cube 1 position, ego x"
+        },
+        {
+          "index": 10,
+          "name": "cube1.pos.y",
+          "unit": "m",
+          "description": "cube 1 position, ego y"
+        },
+        {
+          "index": 11,
+          "name": "cube1.pos.z",
+          "unit": "m",
+          "description": "cube 1 position, ego z"
+        },
+        {
+          "index": 12,
+          "name": "cube1.quat.w",
+          "unit": "1",
+          "description": "cube 1 quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 13,
+          "name": "cube1.quat.x",
+          "unit": "1",
+          "description": "cube 1 quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 14,
+          "name": "cube1.quat.y",
+          "unit": "1",
+          "description": "cube 1 quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 15,
+          "name": "cube1.quat.z",
+          "unit": "1",
+          "description": "cube 1 quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 16,
+          "name": "cube1.parked",
+          "unit": "bool",
+          "description": "1 while cube 1 is parked off the table"
+        },
+        {
+          "index": 17,
+          "name": "cube1.held_by",
+          "unit": "1",
+          "description": "+1 held by self, -1 by the opponent, 0 none (cube 1)"
+        },
+        {
+          "index": 18,
+          "name": "cube2.pos.x",
+          "unit": "m",
+          "description": "cube 2 position, ego x"
+        },
+        {
+          "index": 19,
+          "name": "cube2.pos.y",
+          "unit": "m",
+          "description": "cube 2 position, ego y"
+        },
+        {
+          "index": 20,
+          "name": "cube2.pos.z",
+          "unit": "m",
+          "description": "cube 2 position, ego z"
+        },
+        {
+          "index": 21,
+          "name": "cube2.quat.w",
+          "unit": "1",
+          "description": "cube 2 quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 22,
+          "name": "cube2.quat.x",
+          "unit": "1",
+          "description": "cube 2 quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 23,
+          "name": "cube2.quat.y",
+          "unit": "1",
+          "description": "cube 2 quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 24,
+          "name": "cube2.quat.z",
+          "unit": "1",
+          "description": "cube 2 quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 25,
+          "name": "cube2.parked",
+          "unit": "bool",
+          "description": "1 while cube 2 is parked off the table"
+        },
+        {
+          "index": 26,
+          "name": "cube2.held_by",
+          "unit": "1",
+          "description": "+1 held by self, -1 by the opponent, 0 none (cube 2)"
+        },
+        {
+          "index": 27,
+          "name": "cube3.pos.x",
+          "unit": "m",
+          "description": "cube 3 position, ego x"
+        },
+        {
+          "index": 28,
+          "name": "cube3.pos.y",
+          "unit": "m",
+          "description": "cube 3 position, ego y"
+        },
+        {
+          "index": 29,
+          "name": "cube3.pos.z",
+          "unit": "m",
+          "description": "cube 3 position, ego z"
+        },
+        {
+          "index": 30,
+          "name": "cube3.quat.w",
+          "unit": "1",
+          "description": "cube 3 quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 31,
+          "name": "cube3.quat.x",
+          "unit": "1",
+          "description": "cube 3 quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 32,
+          "name": "cube3.quat.y",
+          "unit": "1",
+          "description": "cube 3 quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 33,
+          "name": "cube3.quat.z",
+          "unit": "1",
+          "description": "cube 3 quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 34,
+          "name": "cube3.parked",
+          "unit": "bool",
+          "description": "1 while cube 3 is parked off the table"
+        },
+        {
+          "index": 35,
+          "name": "cube3.held_by",
+          "unit": "1",
+          "description": "+1 held by self, -1 by the opponent, 0 none (cube 3)"
+        },
+        {
+          "index": 36,
+          "name": "cube4.pos.x",
+          "unit": "m",
+          "description": "cube 4 (the Core) position, ego x"
+        },
+        {
+          "index": 37,
+          "name": "cube4.pos.y",
+          "unit": "m",
+          "description": "cube 4 (the Core) position, ego y"
+        },
+        {
+          "index": 38,
+          "name": "cube4.pos.z",
+          "unit": "m",
+          "description": "cube 4 (the Core) position, ego z"
+        },
+        {
+          "index": 39,
+          "name": "cube4.quat.w",
+          "unit": "1",
+          "description": "cube 4 (the Core) quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 40,
+          "name": "cube4.quat.x",
+          "unit": "1",
+          "description": "cube 4 (the Core) quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 41,
+          "name": "cube4.quat.y",
+          "unit": "1",
+          "description": "cube 4 (the Core) quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 42,
+          "name": "cube4.quat.z",
+          "unit": "1",
+          "description": "cube 4 (the Core) quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 43,
+          "name": "cube4.parked",
+          "unit": "bool",
+          "description": "1 while cube 4 (the Core) is parked off the table"
+        },
+        {
+          "index": 44,
+          "name": "cube4.held_by",
+          "unit": "1",
+          "description": "+1 held by self, -1 by the opponent, 0 none (cube 4 (the Core))"
+        },
+        {
+          "index": 45,
+          "name": "cube5.pos.x",
+          "unit": "m",
+          "description": "cube 5 position, ego x"
+        },
+        {
+          "index": 46,
+          "name": "cube5.pos.y",
+          "unit": "m",
+          "description": "cube 5 position, ego y"
+        },
+        {
+          "index": 47,
+          "name": "cube5.pos.z",
+          "unit": "m",
+          "description": "cube 5 position, ego z"
+        },
+        {
+          "index": 48,
+          "name": "cube5.quat.w",
+          "unit": "1",
+          "description": "cube 5 quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 49,
+          "name": "cube5.quat.x",
+          "unit": "1",
+          "description": "cube 5 quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 50,
+          "name": "cube5.quat.y",
+          "unit": "1",
+          "description": "cube 5 quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 51,
+          "name": "cube5.quat.z",
+          "unit": "1",
+          "description": "cube 5 quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 52,
+          "name": "cube5.parked",
+          "unit": "bool",
+          "description": "1 while cube 5 is parked off the table"
+        },
+        {
+          "index": 53,
+          "name": "cube5.held_by",
+          "unit": "1",
+          "description": "+1 held by self, -1 by the opponent, 0 none (cube 5)"
+        },
+        {
+          "index": 54,
+          "name": "cube6.pos.x",
+          "unit": "m",
+          "description": "cube 6 position, ego x"
+        },
+        {
+          "index": 55,
+          "name": "cube6.pos.y",
+          "unit": "m",
+          "description": "cube 6 position, ego y"
+        },
+        {
+          "index": 56,
+          "name": "cube6.pos.z",
+          "unit": "m",
+          "description": "cube 6 position, ego z"
+        },
+        {
+          "index": 57,
+          "name": "cube6.quat.w",
+          "unit": "1",
+          "description": "cube 6 quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 58,
+          "name": "cube6.quat.x",
+          "unit": "1",
+          "description": "cube 6 quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 59,
+          "name": "cube6.quat.y",
+          "unit": "1",
+          "description": "cube 6 quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 60,
+          "name": "cube6.quat.z",
+          "unit": "1",
+          "description": "cube 6 quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 61,
+          "name": "cube6.parked",
+          "unit": "bool",
+          "description": "1 while cube 6 is parked off the table"
+        },
+        {
+          "index": 62,
+          "name": "cube6.held_by",
+          "unit": "1",
+          "description": "+1 held by self, -1 by the opponent, 0 none (cube 6)"
+        },
+        {
+          "index": 63,
+          "name": "cube7.pos.x",
+          "unit": "m",
+          "description": "cube 7 position, ego x"
+        },
+        {
+          "index": 64,
+          "name": "cube7.pos.y",
+          "unit": "m",
+          "description": "cube 7 position, ego y"
+        },
+        {
+          "index": 65,
+          "name": "cube7.pos.z",
+          "unit": "m",
+          "description": "cube 7 position, ego z"
+        },
+        {
+          "index": 66,
+          "name": "cube7.quat.w",
+          "unit": "1",
+          "description": "cube 7 quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 67,
+          "name": "cube7.quat.x",
+          "unit": "1",
+          "description": "cube 7 quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 68,
+          "name": "cube7.quat.y",
+          "unit": "1",
+          "description": "cube 7 quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 69,
+          "name": "cube7.quat.z",
+          "unit": "1",
+          "description": "cube 7 quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 70,
+          "name": "cube7.parked",
+          "unit": "bool",
+          "description": "1 while cube 7 is parked off the table"
+        },
+        {
+          "index": 71,
+          "name": "cube7.held_by",
+          "unit": "1",
+          "description": "+1 held by self, -1 by the opponent, 0 none (cube 7)"
+        },
+        {
+          "index": 72,
+          "name": "cube8.pos.x",
+          "unit": "m",
+          "description": "cube 8 position, ego x"
+        },
+        {
+          "index": 73,
+          "name": "cube8.pos.y",
+          "unit": "m",
+          "description": "cube 8 position, ego y"
+        },
+        {
+          "index": 74,
+          "name": "cube8.pos.z",
+          "unit": "m",
+          "description": "cube 8 position, ego z"
+        },
+        {
+          "index": 75,
+          "name": "cube8.quat.w",
+          "unit": "1",
+          "description": "cube 8 quaternion w (wxyz, w >= 0)"
+        },
+        {
+          "index": 76,
+          "name": "cube8.quat.x",
+          "unit": "1",
+          "description": "cube 8 quaternion x (wxyz, w >= 0)"
+        },
+        {
+          "index": 77,
+          "name": "cube8.quat.y",
+          "unit": "1",
+          "description": "cube 8 quaternion y (wxyz, w >= 0)"
+        },
+        {
+          "index": 78,
+          "name": "cube8.quat.z",
+          "unit": "1",
+          "description": "cube 8 quaternion z (wxyz, w >= 0)"
+        },
+        {
+          "index": 79,
+          "name": "cube8.parked",
+          "unit": "bool",
+          "description": "1 while cube 8 is parked off the table"
+        },
+        {
+          "index": 80,
+          "name": "cube8.held_by",
+          "unit": "1",
+          "description": "+1 held by self, -1 by the opponent, 0 none (cube 8)"
+        }
+      ]
+    },
+    "contacts": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": {
+        "type": "number"
+      },
+      "x-dtype": "float32",
+      "x-fields": [
+        {
+          "index": 0,
+          "name": "contact0.kind",
+          "unit": "enum",
+          "description": "newest contact event kind: 0 none, 1 strike, 2 graze, 3 deflect, 4 clash, 5 contact, 6 cube_hit, 7 table_hit"
+        },
+        {
+          "index": 1,
+          "name": "contact0.attacker",
+          "unit": "1",
+          "description": "+1 self, -1 opponent, 0 none"
+        },
+        {
+          "index": 2,
+          "name": "contact0.zone",
+          "unit": "enum",
+          "description": "struck link index + 1 in LINK_IDS order (base, shoulder, upper_arm, lower_arm, wrist, gripper, camera_mount, moving_jaw), 0 none"
+        },
+        {
+          "index": 3,
+          "name": "contact0.normal_speed",
+          "unit": "m/s",
+          "description": "approach speed along the contact normal"
+        },
+        {
+          "index": 4,
+          "name": "contact0.age_s",
+          "unit": "s",
+          "description": "observation t minus event t"
+        },
+        {
+          "index": 5,
+          "name": "contact1.kind",
+          "unit": "enum",
+          "description": "2th newest contact event kind: 0 none, 1 strike, 2 graze, 3 deflect, 4 clash, 5 contact, 6 cube_hit, 7 table_hit"
+        },
+        {
+          "index": 6,
+          "name": "contact1.attacker",
+          "unit": "1",
+          "description": "+1 self, -1 opponent, 0 none"
+        },
+        {
+          "index": 7,
+          "name": "contact1.zone",
+          "unit": "enum",
+          "description": "struck link index + 1 in LINK_IDS order (base, shoulder, upper_arm, lower_arm, wrist, gripper, camera_mount, moving_jaw), 0 none"
+        },
+        {
+          "index": 8,
+          "name": "contact1.normal_speed",
+          "unit": "m/s",
+          "description": "approach speed along the contact normal"
+        },
+        {
+          "index": 9,
+          "name": "contact1.age_s",
+          "unit": "s",
+          "description": "observation t minus event t"
+        },
+        {
+          "index": 10,
+          "name": "contact2.kind",
+          "unit": "enum",
+          "description": "3th newest contact event kind: 0 none, 1 strike, 2 graze, 3 deflect, 4 clash, 5 contact, 6 cube_hit, 7 table_hit"
+        },
+        {
+          "index": 11,
+          "name": "contact2.attacker",
+          "unit": "1",
+          "description": "+1 self, -1 opponent, 0 none"
+        },
+        {
+          "index": 12,
+          "name": "contact2.zone",
+          "unit": "enum",
+          "description": "struck link index + 1 in LINK_IDS order (base, shoulder, upper_arm, lower_arm, wrist, gripper, camera_mount, moving_jaw), 0 none"
+        },
+        {
+          "index": 13,
+          "name": "contact2.normal_speed",
+          "unit": "m/s",
+          "description": "approach speed along the contact normal"
+        },
+        {
+          "index": 14,
+          "name": "contact2.age_s",
+          "unit": "s",
+          "description": "observation t minus event t"
+        },
+        {
+          "index": 15,
+          "name": "contact3.kind",
+          "unit": "enum",
+          "description": "4th newest contact event kind: 0 none, 1 strike, 2 graze, 3 deflect, 4 clash, 5 contact, 6 cube_hit, 7 table_hit"
+        },
+        {
+          "index": 16,
+          "name": "contact3.attacker",
+          "unit": "1",
+          "description": "+1 self, -1 opponent, 0 none"
+        },
+        {
+          "index": 17,
+          "name": "contact3.zone",
+          "unit": "enum",
+          "description": "struck link index + 1 in LINK_IDS order (base, shoulder, upper_arm, lower_arm, wrist, gripper, camera_mount, moving_jaw), 0 none"
+        },
+        {
+          "index": 18,
+          "name": "contact3.normal_speed",
+          "unit": "m/s",
+          "description": "approach speed along the contact normal"
+        },
+        {
+          "index": 19,
+          "name": "contact3.age_s",
+          "unit": "s",
+          "description": "observation t minus event t"
+        }
+      ]
+    }
+  },
+  "additionalProperties": true
+}

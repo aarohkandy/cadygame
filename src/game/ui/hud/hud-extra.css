@@ -1,0 +1,153 @@
+/* src/game/ui/hud/hud-extra.css (WP7)
+ * The in-match HUD's own rules for the elements this area added after globals.css was written: the crosshair node
+ * (range ring and receipt), the showKit gates, the number under your plate, the SPARRING tag, the gripper tag,
+ * the one caption with its prosody, the wordmark, the kit panel's heat meter, the low-integrity and Sudden Death
+ * frames, the Core chip's state colours and the TURBO plate's proof-of-life clock. It is a stylesheet rather than
+ * a string in a component because semantic colours belong in CSS (tests/styles-tokens.test.mjs), and because
+ * nothing here should cost a render: every rule is driven by a data attribute that hud-runtime writes to the DOM.
+ *
+ * House rules from globals.css hold: square corners, one 12 degree slant, one colour one meaning, and every
+ * animation switched off under :root[data-reduced-motion="true"]. In a fight nothing here moves longer than
+ * 240 ms (EMOTION_BIBLE 5.7); the caption reveal is the one timed exception the bible sets itself.
+ */
+
+/* ── showKit gates (EMOTION_BIBLE 2): six elements until match 2, the rest earned ── */
+.hud[data-timer="false"] :is(.hud-timer, .hud-rounds) { display: none; }
+.hud[data-tags="false"] :is(.hud-tags, .hud-grip-tag) { display: none; }
+.hud[data-heat="false"] .hud-kit__cell--heat { display: none; }
+.hud[data-kit="false"] .hud-kit { display: none; }
+/* Your bar is mounted hidden and slides in on the first damage taken (200 ms, M3 plate curve). */
+.hud[data-ownbar="false"] .hud-seat--atlas :is(.hud-bar, .hud-seat-num) { visibility: hidden; }
+.hud[data-ownbar="true"] .hud-seat--atlas .hud-bar { animation: tl-slide-l var(--dur-slide) var(--ease-plate) both; }
+/* Round 1 of match 1: BACKLASH · ROOKIE with a SPARRING tag and no bar. */
+.hud-seat-tag { display: none; }
+.hud[data-sparring="true"] .hud-seat--blaze :is(.hud-bar, .hud-seat-num) { display: none; }
+.hud[data-sparring="true"] .hud-seat--blaze .hud-seat-tag { display: inline-block; }
+/* The opponent's whiff, grey on its plate for 300 ms. */
+.hud-seat-whiff { display: none; color: var(--paper-400); }
+.hud-seat-plate[data-whiff="true"] .hud-seat-whiff { display: inline-block; }
+
+/* ── crosshair node (EMOTION_BIBLE 8.1): range ring from ReticleState, receipt under it ── */
+.hud-xh { --fill: 0; position: absolute; left: 0; top: 0; width: 0; height: 0; will-change: transform; }
+.hud-xh__ring { position: absolute; left: calc(-30px * var(--hud-scale)); top: calc(-30px * var(--hud-scale)); width: calc(60px * var(--hud-scale)); height: calc(60px * var(--hud-scale)); transform: rotate(-90deg); }
+.hud-xh__track { fill: none; stroke: color-mix(in srgb, var(--paper) 22%, transparent); stroke-width: 2; }
+.hud-xh__fill { fill: none; stroke: var(--paper); stroke-width: 2.5; stroke-dashoffset: calc(138.23 * (1 - var(--fill))); transition: stroke-dashoffset 80ms linear; }
+.hud-xh[data-inrange="true"] .hud-xh__fill { stroke: var(--paper); stroke-width: 3.5; filter: drop-shadow(0 0 4px var(--glow-paper)); }
+.hud-xh[data-guard="true"] .hud-xh__fill, .hud-xh[data-guard="true"] .hud-xh__track { stroke: var(--block); }
+.hud-xh__receipt { position: absolute; left: 0; top: calc(34px * var(--hud-scale)); translate: -50% 0; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; visibility: hidden; }
+.hud-xh[data-receipt="true"] .hud-xh__receipt { visibility: visible; }
+.hud-xh__text { padding: 2px 10px 1px; background: var(--ink); color: var(--paper); font-weight: 800; font-style: italic; text-transform: uppercase; box-shadow: inset 0 -3px 0 var(--paper-400); }
+.hud-xh[data-band="solid"] .hud-xh__text { box-shadow: inset 0 -3px 0 var(--paper); }
+.hud-xh[data-band="hard"] .hud-xh__text { box-shadow: inset 0 -3px 0 var(--signal); color: var(--paper); }
+.hud-xh[data-band="blocked"] .hud-xh__text { color: var(--ink); background: var(--block); box-shadow: none; }
+.hud-xh__text[data-anim="a"] { animation: tl-pop var(--dur-pop) var(--ease-impact) both; }
+.hud-xh__text[data-anim="b"] { animation: tl-pop-b var(--dur-pop) var(--ease-impact) both; }
+/* `+0.3` in volt: the only prize colour in the fight, and only when a PB was beaten. */
+.hud-xh__pb { color: var(--volt); font-weight: 800; }
+.hud-xh__pb[data-empty="true"] { display: none; }
+.hud:has(.hud-banner[data-show="true"]) .hud-xh { visibility: hidden; }
+
+/* ── `-31` under your plate, in the attacker's colour, for 700 ms ── */
+.hud-taken { display: inline-block; min-width: 2.4ch; color: var(--magenta); font-weight: 800; font-style: italic; -webkit-text-stroke: 1.5px var(--ink); paint-order: stroke fill; }
+.hud-taken[data-team="atlas"] { color: var(--cobalt); }
+.hud-taken[data-anim="a"] { animation: tl-pop var(--dur-pop) var(--ease-impact) both; }
+.hud-taken[data-anim="b"] { animation: tl-pop-b var(--dur-pop) var(--ease-impact) both; }
+
+/* ── OPEN / PUNISH / WHIP over the opponent's gripper, 300 ms (match 2+) ── */
+.hud-grip-tag { position: absolute; left: 0; top: 0; translate: -50% -140%; padding: 2px 8px 1px; background: var(--ink); color: var(--paper-400); font-weight: 800; will-change: transform; white-space: nowrap; }
+.hud-grip-tag[data-kind="punish"] { color: var(--ink); background: var(--strike); }
+.hud-grip-tag[data-kind="whip"] { color: var(--paper); box-shadow: inset 0 -3px 0 var(--signal); }
+.hud-grip-tag[data-anim="a"] { animation: tl-pop var(--dur-pop) var(--ease-impact) both; }
+.hud-grip-tag[data-anim="b"] { animation: tl-pop-b var(--dur-pop) var(--ease-impact) both; }
+
+/* ── the one caption (EMOTION_BIBLE 7): host tag, mouse glyph, prosody as data ── */
+.hud-caption {
+  /* 46px up: clear of the kit strip's line even at the 1080p plate size. `translate`, not `transform`: the
+     slide keyframes own transform. */
+  position: absolute; left: 50%; bottom: calc(var(--safe) + 46px); translate: -50% 0;
+  display: flex; align-items: stretch; max-width: min(900px, calc(100vw - 2 * var(--safe)));
+  --ramp-scale: 1; --reveal-ms: 600ms; --reveal-steps: 20; --reveal-last-ms: 200ms; --reveal-last-steps: 6;
+  font-size: calc(var(--fs-plate) * var(--caption-scale) * var(--ramp-scale));
+}
+.hud-caption[data-show="true"][data-anim] { animation: tl-slide-up var(--dur-slide) var(--ease-plate) both; }
+/* Padding trimmed so the strap clears 6% of frame height even at ramp 3 (1.35x) on a 720p frame (GROUNDING
+   part 2 acceptance 8); the ramp scale itself is prosody data and stays as the bible sets it. */
+.hud-caption__tag, .hud-caption__body { font-size: inherit; padding: 6px 16px 5px; line-height: 1.1; }
+.hud-caption__tag { background: var(--paper); color: var(--ink); clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%); padding-left: 20px; padding-right: 20px; }
+.hud-caption[data-lip="signal"] .hud-caption__tag { background: var(--signal); color: var(--paper); }
+.hud-caption[data-host="false"] .hud-caption__tag { display: none; }
+.hud-caption__body { display: inline-flex; align-items: center; gap: 0.35em; background: var(--ink); box-shadow: inset 0 -4px 0 var(--paper); clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%); margin-left: -6px; padding-left: 22px; padding-right: 24px; text-transform: uppercase; }
+.hud-caption[data-host="false"] .hud-caption__body { margin-left: 0; box-shadow: inset 0 -4px 0 var(--signal); }
+.hud-caption__glyph { display: none; width: 1.1em; height: 1.1em; }
+.hud-caption__glyph svg { width: 100%; height: 100%; }
+.hud-caption[data-glyph="left"] .hud-caption__glyph--left, .hud-caption[data-glyph="right"] .hud-caption__glyph--right, .hud-caption[data-glyph="move"] .hud-caption__glyph--move { display: inline-block; }
+/* ramp 0..3: weight 500 to 900, size 1.0 to 1.35x, reveal 28 to 60 chars/s (the runtime writes --reveal-ms) */
+.hud-caption[data-ramp="0"] { --ramp-scale: 1; font-weight: 500; }
+.hud-caption[data-ramp="1"] { --ramp-scale: 1.12; font-weight: 600; }
+.hud-caption[data-ramp="2"] { --ramp-scale: 1.23; font-weight: 800; }
+.hud-caption[data-ramp="3"] { --ramp-scale: 1.35; font-weight: 900; }
+/* The typewriter is a per-character substring write in hud-runtime.ts, not a CSS clip: a clip steps by a
+   fraction of the span's WIDTH while the step count is a CHARACTER count, and on a proportional face that
+   cuts glyphs in half ("LET US SEE I1" was a half-drawn T). Text writes can only produce whole glyphs. */
+.hud-caption__text, .hud-caption__last { white-space: pre; }
+/* A release line stretches its final word (240 ms, once it has been revealed). */
+.hud-caption[data-release="true"] .hud-caption__last { display: inline-block; transform-origin: left center; }
+.hud-caption[data-release="true"][data-show="true"][data-anim="a"] .hud-caption__last { animation: tl-stretch var(--dur-slam) var(--ease-slam) calc(var(--reveal-ms) + var(--reveal-last-ms)) both; }
+.hud-caption[data-release="true"][data-show="true"][data-anim="b"] .hud-caption__last { animation: tl-stretch-b var(--dur-slam) var(--ease-slam) calc(var(--reveal-ms) + var(--reveal-last-ms)) both; }
+@keyframes tl-stretch { from { transform: scaleX(1); letter-spacing: 0; } to { transform: scaleX(1.06); letter-spacing: 0.06em; } }
+@keyframes tl-stretch-b { from { transform: scaleX(1); letter-spacing: 0; } to { transform: scaleX(1.06); letter-spacing: 0.06em; } }
+@media (max-width: 900px) { .hud-caption { max-width: calc(100vw - 2 * var(--safe)); bottom: calc(var(--safe) + 150px); } .hud-best { bottom: calc(var(--safe) + 176px + 1.1 * var(--fs-plate) * var(--caption-scale)); } }
+
+/* ── wordmark bottom-left: the sixth element, small, never brighter than the fight ── */
+.hud-mark { position: absolute; left: var(--safe); bottom: var(--safe); height: calc(22px * var(--hud-scale)); width: auto; opacity: 0.55; }
+.hud:has(.hud-holdskip, .hud-best) .hud-mark { visibility: hidden; }
+@media (pointer: coarse) { .hud-mark { display: none; } }
+
+/* ── heat meter (match 3+): the same cell shape as the ability cooldown, so the kit strip reads as one line ── */
+.hud-kit__cell--heat { color: var(--paper-400); }
+.hud-kit__heat { --heat: 0; width: 48px; height: 5px; background: var(--ink-500); overflow: hidden; }
+.hud-kit__heat i { display: block; height: 100%; background: var(--paper-400); transform-origin: left; transform: scaleX(var(--heat)); }
+.hud-kit__cell--heat[data-state="warm"] { color: var(--paper); }
+.hud-kit__cell--heat[data-state="warm"] .hud-kit__heat i { background: var(--paper); }
+.hud-kit__cell--heat[data-state="hot"] { color: var(--signal); }
+.hud-kit__cell--heat[data-state="hot"] .hud-kit__heat i { background: var(--signal); }
+.hud-kit__cell--heat[data-state="cutout"] { color: var(--paper); }
+.hud-kit__cell--heat[data-state="cutout"] .hud-kit__heat i {
+  background-image: repeating-linear-gradient(-45deg, var(--signal) 0 5px, var(--ink) 5px 10px);
+  background-size: 14.14px 14.14px; animation: tl-hazard-scroll 700ms linear infinite;
+}
+.hud-kit__heat-value { color: inherit; font-variant-numeric: tabular-nums; min-width: 3ch; text-align: right; }
+
+/* ── round-state frames: the two states that change how you should be playing ── */
+.hud-state { position: absolute; inset: 0; opacity: 0; transition: opacity 220ms var(--ease-snap); }
+.hud[data-low="true"] .hud-state--low { opacity: 1; animation: tl-hud-low-breathe 1400ms ease-in-out infinite; }
+.hud-state--low { box-shadow: inset 0 0 0 6px var(--signal), inset 0 0 90px 10px color-mix(in srgb, var(--signal) 28%, transparent); }
+.hud-state--sudden { box-shadow: inset 0 10px 0 var(--volt), inset 0 -10px 0 var(--volt); }
+.hud[data-sudden="true"] .hud-state--sudden { opacity: 1; }
+
+/* ── Core chip states: the objective's own word is the most-read thing on the board ── */
+.hud-core-chip[data-state="incoming"] .hud-core-chip__label { color: var(--paper-400); }
+.hud-core-chip[data-state="carried"] .hud-core-chip__label,
+.hud-core-chip[data-state="loose"] .hud-core-chip__label { color: var(--paper); }
+.hud-core-chip[data-urgent="true"] { animation: tl-hud-core-urgent 600ms steps(2, jump-none) infinite; }
+.hud-core-chip[data-urgent="true"] .hud-core-chip__value { color: var(--volt); }
+
+/* ── TURBO plate proof of life: a stopped canvas has to prove the match is still moving ── */
+.tl-turbo__clock { display: flex; align-items: baseline; gap: 14px; color: var(--paper); font-variant-numeric: tabular-nums; }
+.tl-turbo__clock b { font-weight: inherit; color: var(--paper-400); }
+
+@keyframes tl-hud-low-breathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+@keyframes tl-hud-core-urgent { 0% { box-shadow: inset 0 0 0 3px var(--volt); } 100% { box-shadow: inset 0 0 0 0 transparent; } }
+
+:root[data-reduced-motion="true"] .hud-state--low,
+:root[data-reduced-motion="true"] .hud-core-chip[data-urgent="true"],
+:root[data-reduced-motion="true"] .hud-kit__cell--heat[data-state="cutout"] .hud-kit__heat i,
+:root[data-reduced-motion="true"] .hud-xh__text[data-anim], :root[data-reduced-motion="true"] .hud-taken[data-anim],
+:root[data-reduced-motion="true"] .hud-grip-tag[data-anim], :root[data-reduced-motion="true"] .hud-caption__last { animation: none; }
+:root[data-reduced-motion="true"] .hud[data-low="true"] .hud-state--low { opacity: 1; }
+:root[data-reduced-motion="true"] .hud-xh__fill { transition: none; }
+
+@media (max-width: 560px) {
+  .hud-state--low { box-shadow: inset 0 0 0 4px var(--signal); }
+  .hud-xh__ring { display: none; }
+}

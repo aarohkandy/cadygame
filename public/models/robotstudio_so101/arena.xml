@@ -1,8 +1,10 @@
-<mujoco model="RoboArena SO-101 Duel">
+<mujoco model="TORQUE LIMIT SO-101 Duel">
   <!--
     The SO-101 is attached twice so both competitors live in the same MuJoCo
     world. Prefixes keep every body, joint, actuator, and geom independently
     addressable while preserving the vendored Menagerie model unchanged.
+    This file is the stock model for PROVING GROUND and HARNESS. ARCADE loads
+    arena-arcade.xml, generated from this file by scripts/gen-arcade-model.mjs.
   -->
   <option integrator="implicitfast" timestep="0.005" cone="elliptic"
     iterations="20" ls_iterations="30" impratio="10"/>
@@ -40,7 +42,8 @@
       <attach model="so101_competitor" body="base" prefix="blaze_"/>
     </body>
 
-    <!-- Nine independent rigid cubes occupy the shared central workspace. -->
+    <!-- Nine independent rigid cubes. cube_4 is the Core; 0, 2, 6, 8 are
+         clutter; the engine parks the rest off the table (GAME_DESIGN 2.5). -->
     <body name="cube_0" pos="-0.04878 0.05366 0.0205" childclass="arena_cube">
       <joint name="cube_0_joint"/><geom name="cube_0_geom"/>
     </body>
@@ -69,7 +72,9 @@
       <joint name="cube_8_joint"/><geom name="cube_8_geom"/>
     </body>
 
-    <site name="atlas_zone" pos="-0.18 0 0.01" size="0.11" type="cylinder" rgba="0.18 0.5 0.38 0.06"/>
-    <site name="blaze_zone" pos="0.18 0 0.01" size="0.11" type="cylinder" rgba="0.94 0.42 0.26 0.06"/>
+    <!-- Core docks: centre and radius pass the geometry gate of
+         scripts/probe-dock-geometry.mjs (GAME_DESIGN 2.5). Sites never collide. -->
+    <site name="atlas_dock" pos="-0.11 0 0" size="0.07 0.0005" type="cylinder" rgba="1 0.84 0.04 0.25"/>
+    <site name="blaze_dock" pos="0.11 0 0" size="0.07 0.0005" type="cylinder" rgba="1 0.84 0.04 0.25"/>
   </worldbody>
 </mujoco>

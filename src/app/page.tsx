@@ -1,5 +1,5 @@
-import { ArenaApp } from "@/components/arena-app";
+import { ClientEntry } from "@/game/client-entry";
 
 export default function Home() {
-  return <ArenaApp />;
+  return <ClientEntry />;
 }

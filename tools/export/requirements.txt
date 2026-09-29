@@ -1,0 +1,12 @@
+# TORQUE LIMIT Python tools (tools/bridge, tools/export).
+#
+# Local checks need only these three (no torch, no lerobot):
+#   python -m pip install numpy websockets pytest
+#   python -m pytest tools/bridge tools/export
+numpy>=1.24
+websockets>=12.0
+pytest>=8.0
+#
+# Writing a real LeRobotDataset (pulls in torch; run on homebase, see docs/HARNESS.md):
+#   python -m pip install -r tools/export/requirements.txt
+lerobot==0.4.0

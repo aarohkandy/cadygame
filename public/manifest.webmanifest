@@ -1,0 +1,27 @@
+{
+  "id": "/?app=torque-limit",
+  "name": "TORQUE LIMIT",
+  "short_name": "TORQUE LIMIT",
+  "description": "A first-person robot-arm fight show. Pilot a simulated SO-101 against an AI, under real MuJoCo physics, and verify your own policies in The Lab.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone", "minimal-ui"],
+  "orientation": "landscape",
+  "theme_color": "#0E0F14",
+  "background_color": "#0E0F14",
+  "categories": ["games", "entertainment", "education"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "screenshots": [
+    { "src": "og.png", "sizes": "1200x630", "type": "image/png", "form_factor": "wide", "label": "TORQUE LIMIT wordmark on the show's ink plate" }
+  ],
+  "prefer_related_applications": false
+}

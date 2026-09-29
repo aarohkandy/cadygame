@@ -1,32 +1,117 @@
 {
-  "name": "wrestling_arena",
+  "name": "torque-limit",
   "version": "0.1.0",
+  "description": "TORQUE LIMIT - a first-person 1v1 robot-arm fight show under real MuJoCo physics.",
+  "author": "TORQUE LIMIT",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node scripts/sync-mujoco.mjs && node scripts/sync-fonts.mjs && next dev -p ${PORT:-3100}",
+    "build": "node scripts/sync-mujoco.mjs && node scripts/sync-fonts.mjs && next build",
+    "build:web": "node scripts/app-build-web.mjs",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/*.test.mjs"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "bench": "node scripts/bench-physics.mjs",
+    "gen:arcade-model": "node scripts/gen-arcade-model.mjs",
+    "bake:meshes": "node scripts/bake-meshes.mjs",
+    "probe:docks": "node scripts/probe-dock-geometry.mjs",
+    "gen:fixture": "node scripts/gen-registration-fixture.mjs",
+    "sync:fonts": "node scripts/sync-fonts.mjs",
+    "eval": "node scripts/eval.mjs",
+    "check:stubs": "node scripts/check-stubs.mjs",
+    "app:serve": "node scripts/app-serve.mjs out --port 4300",
+    "app:icons": "node scripts/app-icons.mjs",
+    "app:dev": "node scripts/app-desktop.mjs --dev",
+    "app:mac": "node scripts/app-desktop.mjs --mac"
   },
   "dependencies": {
-    "@mujoco/mujoco": "^3.12.0",
-    "@react-three/drei": "^10.7.8",
-    "@react-three/fiber": "^9.7.0",
+    "@mujoco/mujoco": "3.12.0",
+    "@react-three/drei": "10.7.8",
+    "@react-three/fiber": "9.7.0",
+    "@react-three/postprocessing": "3.1.1",
     "next": "16.3.3",
+    "postprocessing": "6.39.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "three": "^0.185.1"
+    "three": "0.185.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.2",
+    "@capacitor/core": "8.5.2",
+    "@fontsource/anton": "5.3.0",
+    "@fontsource/barlow-condensed": "5.3.0",
+    "@fontsource/chivo-mono": "5.3.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "^0.185.4",
+    "electron": "44.4.2",
+    "electron-builder": "26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "typescript-eslint": "8.70.0"
+  },
+  "main": "electron/main.mjs",
+  "build": {
+    "appId": "app.torquelimit.game",
+    "productName": "TORQUE LIMIT",
+    "directories": {
+      "output": "dist-app",
+      "buildResources": "electron/build"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "out",
+        "to": "app",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "electronLanguages": [
+      "en-US"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.action-games",
+      "icon": "electron/build/icon.png",
+      "identity": null,
+      "darkModeSupport": true,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": null,
+        "NSCameraUsageDescription": null
+      }
+    },
+    "dmg": {
+      "title": "TORQUE LIMIT",
+      "backgroundColor": "#0E0F14"
+    }
   }
 }
